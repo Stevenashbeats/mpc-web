@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MPC ⇄ Ableton Drum Rack Converter</title>
+<style>
+  :root{ --bg:#15171c; --panel:#1e2128; --panel2:#262a33; --line:#333845;
+         --txt:#e6e8ec; --dim:#9aa3b2; --acc:#ff7a3d; --acc2:#3da8ff; --ok:#5fd38a; --err:#ff6b6b; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:24px 16px 60px}
+  h1{font-size:22px;margin:6px 0 2px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:20px}
+  .tabs{display:flex;gap:8px;margin-bottom:18px}
+  .tab{flex:1;padding:14px 10px;border:1px solid var(--line);border-radius:12px;
+       background:var(--panel);cursor:pointer;text-align:center;transition:.15s}
+  .tab small{display:block;color:var(--dim);font-size:12px;margin-top:3px}
+  .tab.active{border-color:var(--acc);background:#2a2018;box-shadow:0 0 0 1px var(--acc) inset}
+  .tab.active.rev{border-color:var(--acc2);background:#16222e;box-shadow:0 0 0 1px var(--acc2) inset}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+  .card h3{margin:0 0 4px;font-size:14px}
+  .card p.hint{margin:0 0 10px;color:var(--dim);font-size:12.5px}
+  .drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;
+        color:var(--dim);cursor:pointer;transition:.15s;background:var(--panel2)}
+  .drop.over{border-color:var(--acc2);color:var(--txt);background:#1b2430}
+  .drop b{color:var(--txt)}
+  .files{margin-top:10px;font-size:12.5px;color:var(--dim);max-height:120px;overflow:auto}
+  .files .f{padding:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .opt{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:13.5px}
+  input[type=number]{width:70px;background:var(--panel2);border:1px solid var(--line);
+        color:var(--txt);border-radius:8px;padding:6px 8px}
+  .btn{display:block;width:100%;padding:15px;border:0;border-radius:12px;font-size:16px;
+       font-weight:600;color:#10131a;background:var(--acc);cursor:pointer;margin-top:6px}
+  .btn.rev{background:var(--acc2)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .log{background:#0e1014;border:1px solid var(--line);border-radius:10px;padding:12px;
+       font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;color:var(--dim);
+       max-height:240px;overflow:auto;margin-top:12px;display:none}
+  .log.show{display:block}
+  .dl{display:none;margin-top:12px;text-align:center}
+  .dl.show{display:block}
+  .dl a{display:inline-block;padding:13px 22px;background:var(--ok);color:#0c1410;
+        border-radius:11px;text-decoration:none;font-weight:600}
+  #pvMeta{color:var(--dim);font-weight:400;font-size:12px}
+  .banks{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .bk{padding:6px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+      cursor:pointer;font-size:13px;color:var(--dim)}
+  .bk.has{color:var(--txt)}
+  .bk.active{border-color:var(--acc2);color:#fff;background:#1b2430}
+  .padgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .pad{aspect-ratio:1/1;border:1px solid var(--line);border-radius:10px;background:var(--panel2);
+       padding:7px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden}
+  .pad.has{cursor:pointer}
+  .pad.has:hover{border-color:var(--acc2)}
+  .pad.has:active{transform:scale(.97)}
+  .pad.playing{box-shadow:0 0 0 2px var(--acc) inset;border-color:var(--acc)}
+  .pad .pn{color:var(--dim);font-size:10px;display:flex;justify-content:space-between;align-items:center}
+  .pad .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .pad .sn{font-weight:600;font-size:12px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pad .meta{color:var(--dim);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pad.miss{border-color:var(--err)} .pad.miss .sn{color:var(--err)}
+  .pad.empty{opacity:.35}
+  .ok{color:var(--ok)} .err{color:var(--err)} .acc{color:var(--acc2)}
+  footer{color:var(--dim);font-size:12px;text-align:center;margin-top:24px}
+  footer a{color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MPC ⇄ Ableton Drum Rack</h1>
+  <div class="sub">Konwersja w przeglądarce — pliki nie wychodzą z Twojego komputera. Nie wymaga instalacji.</div>
+
+  <div class="tabs">
+    <div class="tab rev active" id="tabRev" onclick="setMode('rev')">
+      Ableton → MPC <small>.adg → .xpm (MPC 3)</small></div>
+    <div class="tab" id="tabFwd" onclick="setMode('fwd')">
+      MPC → Ableton <small>.xpm → .adg (Live 12)</small></div>
+  </div>
+
+  <div class="card">
+    <h3 id="prgTitle">1. Plik programu (.adg)</h3>
+    <p class="hint" id="prgHint">Przeciągnij plik drum racka Ableton, albo kliknij by wybrać.</p>
+    <div class="drop" id="dropProg">
+      <b id="dropProgLbl">Upuść .adg tutaj</b><br>lub kliknij, by wybrać
+    </div>
+    <div class="files" id="progFiles"></div>
+  </div>
+
+  <div class="card">
+    <h3>2. Sample (pliki WAV)</h3>
+    <p class="hint">Przeciągnij folder z samplami albo zaznacz pliki .wav. Dopasowanie po nazwie.</p>
+    <div class="drop" id="dropSamp">
+      <b>Upuść folder / pliki WAV tutaj</b><br>lub kliknij, by wybrać
+    </div>
+    <div class="files" id="sampFiles"></div>
+  </div>
+
+  <div class="card">
+    <h3>3. Opcje</h3>
+    <div class="opt" id="optCompact">
+      <input type="checkbox" id="compact">
+      <label for="compact">Compact — najniższy pad na pad MPC 1 (gdy rack nie zaczyna się od C1)</label>
+    </div>
+    <div class="opt" id="optFirstNote" style="display:none">
+      <label for="firstNote">Pierwsza nuta MIDI (pad 1):</label>
+      <input type="number" id="firstNote" min="0" max="120" value="36">
+      <span style="color:var(--dim)">36 = C1 (auto, gdy puste)</span>
+    </div>
+  </div>
+
+  <div class="card" id="previewCard" style="display:none">
+    <h3>Podgląd — co wpada na pady <span id="pvMeta"></span></h3>
+    <p class="hint">Klik na pad = odsłuch (z chopem, głośnością i choke). Kolorowa kropka = mute/choke group.</p>
+    <div class="banks" id="pvBanks"></div>
+    <div class="padgrid" id="previewGrid"></div>
+  </div>
+
+  <button class="btn rev" id="goBtn" onclick="run()">Konwertuj</button>
+
+  <div class="log" id="log"></div>
+  <div class="dl" id="dl"><a id="dlLink" download>⬇ Pobierz kit (.zip)</a></div>
+
+  
+
+  <footer>
+    Format MPC 3 odtworzony z pliku natywnego • działa offline po załadowaniu •
+    <a href="https://github.com/Stevenashbeats/drumrack2mpc" target="_blank">źródło</a>
+  </footer>
+</div>
+
+<script>
+// Auto-generated: szablony MPC3 (.xpm) i Ableton (.adg).
+(function(g){
+  g.TEMPLATES = {
+  mpc3_head: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n\r\n<MPCVObject>\r\n  <Version>\r\n    <File_Version>2.1</File_Version>\r\n    <Application>MPC-V</Application>\r\n    <Application_Version>3.5.0.59</Application_Version>\r\n    <Platform>OSX</Platform>\r\n  </Version>\r\n  <Program type=\"Drum\">\r\n    <ProgramName>__PROGRAM_NAME__</ProgramName>\r\n    <ProgramPads-v2.10>{\r\n    &quot;ProgramPads-v2.10&quot;: {\r\n        &quot;Universal&quot;: {\r\n            &quot;value0&quot;: true\r\n        },\r\n        &quot;Type&quot;: {\r\n            &quot;value0&quot;: 4\r\n        },\r\n        &quot;universalPad&quot;: 7775,\r\n        &quot;pads&quot;: {\r\n            &quot;value0&quot;: 0,\r\n            &quot;value1&quot;: 0,\r\n            &quot;value2&quot;: 0,\r\n            &quot;value3&quot;: 0,\r\n            &quot;value4&quot;: 0,\r\n            &quot;value5&quot;: 0,\r\n            &quot;value6&quot;: 0,\r\n            &quot;value7&quot;: 0,\r\n            &quot;value8&quot;: 0,\r\n            &quot;value9&quot;: 0,\r\n            &quot;value10&quot;: 0,\r\n            &quot;value11&quot;: 0,\r\n            &quot;value12&quot;: 0,\r\n            &quot;value13&quot;: 0,\r\n            &quot;value14&quot;: 0,\r\n            &quot;value15&quot;: 0,\r\n            &quot;value16&quot;: 0,\r\n            &quot;value17&quot;: 0,\r\n            &quot;value18&quot;: 0,\r\n            &quot;value19&quot;: 0,\r\n            &quot;value20&quot;: 0,\r\n            &quot;value21&quot;: 0,\r\n            &quot;value22&quot;: 0,\r\n            &quot;value23&quot;: 0,\r\n            &quot;value24&quot;: 0,\r\n            &quot;value25&quot;: 0,\r\n            &quot;value26&quot;: 0,\r\n            &quot;value27&quot;: 0,\r\n            &quot;value28&quot;: 0,\r\n            &quot;value29&quot;: 0,\r\n            &quot;value30&quot;: 0,\r\n            &quot;value31&quot;: 0,\r\n            &quot;value32&quot;: 0,\r\n            &quot;value33&quot;: 0,\r\n            &quot;value34&quot;: 0,\r\n            &quot;value35&quot;: 0,\r\n            &quot;value36&quot;: 0,\r\n            &quot;value37&quot;: 0,\r\n            &quot;value38&quot;: 0,\r\n            &quot;value39&quot;: 0,\r\n            &quot;value40&quot;: 0,\r\n            &quot;value41&quot;: 0,\r\n            &quot;value42&quot;: 0,\r\n            &quot;value43&quot;: 0,\r\n            &quot;value44&quot;: 0,\r\n            &quot;value45&quot;: 0,\r\n            &quot;value46&quot;: 0,\r\n            &quot;value47&quot;: 0,\r\n            &quot;value48&quot;: 0,\r\n            &quot;value49&quot;: 0,\r\n            &quot;value50&quot;: 0,\r\n            &quot;value51&quot;: 0,\r\n            &quot;value52&quot;: 0,\r\n            &quot;value53&quot;: 0,\r\n            &quot;value54&quot;: 0,\r\n            &quot;value55&quot;: 0,\r\n            &quot;value56&quot;: 0,\r\n            &quot;value57&quot;: 0,\r\n            &quot;value58&quot;: 0,\r\n            &quot;value59&quot;: 0,\r\n            &quot;value60&quot;: 0,\r\n            &quot;value61&quot;: 0,\r\n            &quot;value62&quot;: 0,\r\n            &quot;value63&quot;: 0,\r\n            &quot;value64&quot;: 0,\r\n            &quot;value65&quot;: 0,\r\n            &quot;value66&quot;: 0,\r\n            &quot;value67&quot;: 0,\r\n            &quot;value68&quot;: 0,\r\n            &quot;value69&quot;: 0,\r\n            &quot;value70&quot;: 0,\r\n            &quot;value71&quot;: 0,\r\n            &quot;value72&quot;: 0,\r\n            &quot;value73&quot;: 0,\r\n            &quot;value74&quot;: 0,\r\n            &quot;value75&quot;: 0,\r\n            &quot;value76&quot;: 0,\r\n            &quot;value77&quot;: 0,\r\n            &quot;value78&quot;: 0,\r\n            &quot;value79&quot;: 0,\r\n            &quot;value80&quot;: 0,\r\n            &quot;value81&quot;: 0,\r\n            &quot;value82&quot;: 0,\r\n            &quot;value83&quot;: 0,\r\n            &quot;value84&quot;: 0,\r\n            &quot;value85&quot;: 0,\r\n            &quot;value86&quot;: 0,\r\n            &quot;value87&quot;: 0,\r\n            &quot;value88&quot;: 0,\r\n            &quot;value89&quot;: 0,\r\n            &quot;value90&quot;: 0,\r\n            &quot;value91&quot;: 0,\r\n            &quot;value92&quot;: 0,\r\n            &quot;value93&quot;: 0,\r\n            &quot;value94&quot;: 0,\r\n            &quot;value95&quot;: 0,\r\n            &quot;value96&quot;: 0,\r\n            &quot;value97&quot;: 0,\r\n            &quot;value98&quot;: 0,\r\n            &quot;value99&quot;: 0,\r\n            &quot;value100&quot;: 0,\r\n            &quot;value101&quot;: 0,\r\n            &quot;value102&quot;: 0,\r\n            &quot;value103&quot;: 0,\r\n            &quot;value104&quot;: 0,\r\n            &quot;value105&quot;: 0,\r\n            &quot;value106&quot;: 0,\r\n            &quot;value107&quot;: 0,\r\n            &quot;value108&quot;: 0,\r\n            &quot;value109&quot;: 0,\r\n            &quot;value110&quot;: 0,\r\n            &quot;value111&quot;: 0,\r\n            &quot;value112&quot;: 0,\r\n            &quot;value113&quot;: 0,\r\n            &quot;value114&quot;: 0,\r\n            &quot;value115&quot;: 0,\r\n            &quot;value116&quot;: 0,\r\n            &quot;value117&quot;: 0,\r\n            &quot;value118&quot;: 0,\r\n            &quot;value119&quot;: 0,\r\n            &quot;value120&quot;: 0,\r\n            &quot;value121&quot;: 0,\r\n            &quot;value122&quot;: 0,\r\n            &quot;value123&quot;: 0,\r\n            &quot;value124&quot;: 0,\r\n            &quot;value125&quot;: 0,\r\n            &quot;value126&quot;: 0,\r\n            &quot;value127&quot;: 0\r\n        },\r\n        &quot;UnusedPads&quot;: {\r\n            &quot;value0&quot;: 1\r\n        },\r\n        &quot;PadsFollowTrackColour&quot;: {\r\n            &quot;value0&quot;: false\r\n        }\r\n    }\r\n}</ProgramPads-v2.10>\r\n    <CueBusEnable>False</CueBusEnable>\r\n    <AudioRoute>\r\n      <AudioRoute>2</AudioRoute>\r\n      <AudioRouteSubIndex>0</AudioRouteSubIndex>\r\n      <AudioRouteChannelBitmap>3</AudioRouteChannelBitmap>\r\n      <InsertsEnabled>True</InsertsEnabled>\r\n    </AudioRoute>\r\n    <Send1>0.000000</Send1>\r\n    <Send2>0.000000</Send2>\r\n    <Send3>0.000000</Send3>\r\n    <Send4>0.000000</Send4>\r\n    <Volume>0.707946</Volume>\r\n    <Mute>False</Mute>\r\n    <Solo>False</Solo>\r\n    <Pan>0.500000</Pan>\r\n    <AutomationFilter>1</AutomationFilter>\r\n    <Pitch>0.000000</Pitch>\r\n    <TuneCoarse>0</TuneCoarse>\r\n    <TuneFine>0</TuneFine>\r\n    <Mono>False</Mono>\r\n    <Program_Polyphony>0</Program_Polyphony>\r\n    <PortamentoTime>0.000000</PortamentoTime>\r\n    <PortamentoLegato>False</PortamentoLegato>\r\n    <PortamentoQuantized>False</PortamentoQuantized>\r\n    <Program.Xfader.Route>0</Program.Xfader.Route>\r\n    <MonoRetrigger>False</MonoRetrigger>\r\n    <FreeRunningLFO Num=\"0\">\r\n      <Type>Sine</Type>\r\n      <Rate>0.500000</Rate>\r\n      <Sync>0</Sync>\r\n      <DelaySync>0</DelaySync>\r\n      <FadeinSync>0</FadeinSync>\r\n      <LfoDelay>0.000000</LfoDelay>\r\n      <LfoLevel>1.000000</LfoLevel>\r\n      <LfoFadein>0.000000</LfoFadein>\r\n      <Reset>True</Reset>\r\n    </FreeRunningLFO>\r\n    <FreeRunningLFO Num=\"1\">\r\n      <Type>Sine</Type>\r\n      <Rate>0.500000</Rate>\r\n      <Sync>0</Sync>\r\n      <DelaySync>0</DelaySync>\r\n      <FadeinSync>0</FadeinSync>\r\n      <LfoDelay>0.000000</LfoDelay>\r\n      <LfoLevel>1.000000</LfoLevel>\r\n      <LfoFadein>0.000000</LfoFadein>\r\n      <Reset>True</Reset>\r\n    </FreeRunningLFO>\r\n    <GlobalDriftSpeed>0.000000</GlobalDriftSpeed>\r\n    <Instruments>\r\n",
+  mpc3_instrument: "      <Instrument number=\"__INST_NUMBER__\">\r\n        <CueBusEnable>False</CueBusEnable>\r\n        <AudioRoute>\r\n          <AudioRoute>0</AudioRoute>\r\n          <AudioRouteSubIndex>0</AudioRouteSubIndex>\r\n          <AudioRouteChannelBitmap>3</AudioRouteChannelBitmap>\r\n          <InsertsEnabled>True</InsertsEnabled>\r\n        </AudioRoute>\r\n        <Send1>0.000000</Send1>\r\n        <Send2>0.000000</Send2>\r\n        <Send3>0.000000</Send3>\r\n        <Send4>0.000000</Send4>\r\n        <Volume>__INST_VOLUME__</Volume>\r\n        <Mute>False</Mute>\r\n        <Solo>False</Solo>\r\n        <Pan>__INST_PAN__</Pan>\r\n        <AutomationFilter>1</AutomationFilter>\r\n        <FilterKeytrack>0.000000</FilterKeytrack>\r\n        <FilterType>0</FilterType>\r\n        <Cutoff>1.000000</Cutoff>\r\n        <Resonance>0.000000</Resonance>\r\n        <FilterEnvAmt>0.000000</FilterEnvAmt>\r\n        <AfterTouchToFilter>0.000000</AfterTouchToFilter>\r\n        <ChannelPressureToFilter>0.000000</ChannelPressureToFilter>\r\n        <VelocityToFilter>0.000000</VelocityToFilter>\r\n        <VelocityToFilterEnvelope>0.000000</VelocityToFilterEnvelope>\r\n        <FilterSerialRouting>False</FilterSerialRouting>\r\n        <FilterBlend>0.500000</FilterBlend>\r\n        <Filter2Keytrack>0.000000</Filter2Keytrack>\r\n        <Filter2Type>0</Filter2Type>\r\n        <Cutoff2>1.000000</Cutoff2>\r\n        <Resonance2>0.000000</Resonance2>\r\n        <Resonance2>0.000000</Resonance2>\r\n        <Filter2EnvAmt>0.000000</Filter2EnvAmt>\r\n        <AfterTouchToFilter2>0.000000</AfterTouchToFilter2>\r\n        <VelocityToFilter2>0.000000</VelocityToFilter2>\r\n        <VelocityToFilter2Envelope>0.000000</VelocityToFilter2Envelope>\r\n        <VoiceDriftSpeed>0.000000</VoiceDriftSpeed>\r\n        <VelocityToStart>0.000000</VelocityToStart>\r\n        <VelocityToFilterAttack>0.000000</VelocityToFilterAttack>\r\n        <FilterAttack>0.000000</FilterAttack>\r\n        <FilterDecay>0.047244</FilterDecay>\r\n        <FilterSustain>1.000000</FilterSustain>\r\n        <FilterRelease>0.000000</FilterRelease>\r\n        <FilterAttackCurve>0.375000</FilterAttackCurve>\r\n        <FilterDecayCurve>0.375000</FilterDecayCurve>\r\n        <FilterReleaseCurve>0.375000</FilterReleaseCurve>\r\n        <FilterHold>0.000000</FilterHold>\r\n        <FilterDecayType>True</FilterDecayType>\r\n        <FilterADEnvelope>True</FilterADEnvelope>\r\n        <VolumeHold>0.000000</VolumeHold>\r\n        <VolumeDecayType>True</VolumeDecayType>\r\n        <VolumeADEnvelope>True</VolumeADEnvelope>\r\n        <VolumeAttack>0.000000</VolumeAttack>\r\n        <VolumeDecay>0.047244</VolumeDecay>\r\n        <VolumeSustain>1.000000</VolumeSustain>\r\n        <VolumeRelease>0.000000</VolumeRelease>\r\n        <VolumeAttackCurve>0.375000</VolumeAttackCurve>\r\n        <VolumeDecayCurve>0.375000</VolumeDecayCurve>\r\n        <VolumeReleaseCurve>0.375000</VolumeReleaseCurve>\r\n        <PitchHold>0.000000</PitchHold>\r\n        <PitchDecayType>True</PitchDecayType>\r\n        <PitchADEnvelope>True</PitchADEnvelope>\r\n        <PitchAttack>0.000000</PitchAttack>\r\n        <PitchDecay>0.047244</PitchDecay>\r\n        <PitchSustain>1.000000</PitchSustain>\r\n        <PitchRelease>0.000000</PitchRelease>\r\n        <PitchAttackCurve>0.375000</PitchAttackCurve>\r\n        <PitchDecayCurve>0.375000</PitchDecayCurve>\r\n        <PitchReleaseCurve>0.375000</PitchReleaseCurve>\r\n        <PitchEnvAmount>0.500000</PitchEnvAmount>\r\n        <VolumeDelay>0.000000</VolumeDelay>\r\n        <PitchDelay>0.000000</PitchDelay>\r\n        <FilterDelay>0.000000</FilterDelay>\r\n        <AuxDelay>0.000000</AuxDelay>\r\n        <VolumeTempoSync>0</VolumeTempoSync>\r\n        <PitchTempoSync>0</PitchTempoSync>\r\n        <FilterLoopMode>0</FilterLoopMode>\r\n        <AuxTempoSync>0</AuxTempoSync>\r\n        <VolumeLooped>False</VolumeLooped>\r\n        <PitchLooped>False</PitchLooped>\r\n        <FilterLooped>False</FilterLooped>\r\n        <AuxLooped>False</AuxLooped>\r\n        <VolumeTimeScale>0.500000</VolumeTimeScale>\r\n        <PitchTimeScale>0.500000</PitchTimeScale>\r\n        <FilterTimeScale>0.500000</FilterTimeScale>\r\n        <AuxTimeScale>0.500000</AuxTimeScale>\r\n        <AuxHold>0.000000</AuxHold>\r\n        <AuxDecayType>True</AuxDecayType>\r\n        <AuxADEnvelope>True</AuxADEnvelope>\r\n        <AuxAttack>0.000000</AuxAttack>\r\n        <AuxDecay>0.047244</AuxDecay>\r\n        <AuxSustain>1.000000</AuxSustain>\r\n        <AuxRelease>0.000000</AuxRelease>\r\n        <AuxAttackCurve>0.375000</AuxAttackCurve>\r\n        <AuxDecayCurve>0.375000</AuxDecayCurve>\r\n        <AuxReleaseCurve>0.375000</AuxReleaseCurve>\r\n        <AuxEnvAmount>1.000000</AuxEnvAmount>\r\n        <FilterOutputLevel>1.000000</FilterOutputLevel>\r\n        <Filter2OutputLevel>1.000000</Filter2OutputLevel>\r\n        <VelocityToPitch>0.000000</VelocityToPitch>\r\n        <VelocityToVolumeAttack>0.000000</VelocityToVolumeAttack>\r\n        <VelocitySensitivity>1.000000</VelocitySensitivity>\r\n        <VelocityToPan>0.000000</VelocityToPan>\r\n        <RandomizationScale>1.000000</RandomizationScale>\r\n        <AttackRandom>0.000000</AttackRandom>\r\n        <DecayRandom>0.000000</DecayRandom>\r\n        <CutoffRandom>0.000000</CutoffRandom>\r\n        <ResonanceRandom>0.000000</ResonanceRandom>\r\n        <Cutoff2Random>0.000000</Cutoff2Random>\r\n        <Resonance2Random>0.000000</Resonance2Random>\r\n        <LFO LfoNum=\"0\">\r\n          <Type>Sine</Type>\r\n          <Rate>0.500000</Rate>\r\n          <Sync>0</Sync>\r\n          <DelaySync>0</DelaySync>\r\n          <FadeinSync>0</FadeinSync>\r\n          <LfoDelay>0.000000</LfoDelay>\r\n          <LfoLevel>1.000000</LfoLevel>\r\n          <LfoFadein>0.000000</LfoFadein>\r\n          <Reset>True</Reset>\r\n          <LfoPitch>0.000000</LfoPitch>\r\n          <LfoCutoff>0.000000</LfoCutoff>\r\n          <LfoCutoff2>0.000000</LfoCutoff2>\r\n          <LfoVolume>0.000000</LfoVolume>\r\n          <LfoPan>0.000000</LfoPan>\r\n        </LFO>\r\n        <LFO LfoNum=\"1\">\r\n          <Type>Sine</Type>\r\n          <Rate>0.500000</Rate>\r\n          <Sync>0</Sync>\r\n          <DelaySync>0</DelaySync>\r\n          <FadeinSync>0</FadeinSync>\r\n          <LfoDelay>0.000000</LfoDelay>\r\n          <LfoLevel>1.000000</LfoLevel>\r\n          <LfoFadein>0.000000</LfoFadein>\r\n          <Reset>True</Reset>\r\n          <LfoPitch>0.000000</LfoPitch>\r\n          <LfoCutoff>0.000000</LfoCutoff>\r\n          <LfoCutoff2>0.000000</LfoCutoff2>\r\n          <LfoVolume>0.000000</LfoVolume>\r\n          <LfoPan>0.000000</LfoPan>\r\n        </LFO>\r\n        <Ramp Num=\"0\" RampTime=\"0.0\"/>\r\n        <Ramp Num=\"1\" RampTime=\"0.0\"/>\r\n        <DrumPadEffects>\r\n          <DrumPadEffect Num=\"0\" Parameter=\"0.0\" Type=\"0\"/>\r\n          <DrumPadEffect Num=\"1\" Parameter=\"0.0\" Type=\"9\"/>\r\n          <DrumPadEffect Num=\"2\" Parameter=\"0.0\" Type=\"1\"/>\r\n          <DrumPadEffect Num=\"3\" Parameter=\"0.0\" Type=\"2\"/>\r\n          <DrumPadEffect Num=\"4\" Parameter=\"0.0\" Type=\"3\"/>\r\n          <DrumPadEffect Num=\"5\" Parameter=\"0.0\" Type=\"7\"/>\r\n          <DrumPadEffect Num=\"6\" Parameter=\"0.0\" Type=\"4\"/>\r\n          <DrumPadEffect Num=\"7\" Parameter=\"0.0\" Type=\"13\"/>\r\n        </DrumPadEffects>\r\n        <TuneCoarse>0</TuneCoarse>\r\n        <TuneFine>0</TuneFine>\r\n        <Mono>True</Mono>\r\n        <Polyphony>1</Polyphony>\r\n        <LowNote>0</LowNote>\r\n        <HighNote>127</HighNote>\r\n        <IgnoreBaseNote>False</IgnoreBaseNote>\r\n        <VelocityScale>1.000000</VelocityScale>\r\n        <ZonePlay>1</ZonePlay>\r\n        <MuteGroup>__MUTE_GROUP__</MuteGroup>\r\n        <MuteTarget1>0</MuteTarget1>\r\n        <MuteTarget2>0</MuteTarget2>\r\n        <MuteTarget3>0</MuteTarget3>\r\n        <MuteTarget4>0</MuteTarget4>\r\n        <SimultTarget1>0</SimultTarget1>\r\n        <SimultTarget2>0</SimultTarget2>\r\n        <SimultTarget3>0</SimultTarget3>\r\n        <SimultTarget4>0</SimultTarget4>\r\n        <TriggerMode>0</TriggerMode>\r\n        <WarpTempo>120.000000</WarpTempo>\r\n        <BpmLock>True</BpmLock>\r\n        <WarpEnable>False</WarpEnable>\r\n        <StretchPercentage>100</StretchPercentage>\r\n        <WarpUserAlgoIndex>14</WarpUserAlgoIndex>\r\n        <EditAllLayers>False</EditAllLayers>\r\n        <Layers>\r\n          <Layer number=\"1\">\r\n            <Active>True</Active>\r\n            <Volume>1.000000</Volume>\r\n            <Pan>0.500000</Pan>\r\n            <Pitch>0.000000</Pitch>\r\n            <TuneCoarse>0</TuneCoarse>\r\n            <TuneFine>0</TuneFine>\r\n            <VelStart>0</VelStart>\r\n            <VelEnd>127</VelEnd>\r\n            <SampleStart>__L_SAMPLE_START__</SampleStart>\r\n            <SampleEnd>__L_SAMPLE_END__</SampleEnd>\r\n            <LoopStart>0</LoopStart>\r\n            <LoopEnd>0</LoopEnd>\r\n            <LoopCrossfadeLength>0</LoopCrossfadeLength>\r\n            <LoopTune>0</LoopTune>\r\n            <RootNote>0</RootNote>\r\n            <KeyTrack>False</KeyTrack>\r\n            <SampleName>__SAMPLE_NAME__</SampleName>\r\n            <PitchRandom>0.000000</PitchRandom>\r\n            <VolumeRandom>0.000000</VolumeRandom>\r\n            <PanRandom>0.000000</PanRandom>\r\n            <OffsetRandom>0.000000</OffsetRandom>\r\n            <SliceIncrement>0</SliceIncrement>\r\n            <SliceCycleLength>1</SliceCycleLength>\r\n            <SliceIncrementRngSeed>483838528</SliceIncrementRngSeed>\r\n            <SampleFile></SampleFile>\r\n            <SliceIndex>129</SliceIndex>\r\n            <Direction>0</Direction>\r\n            <Offset>0</Offset>\r\n            <SliceStart>__L_SLICE_START__</SliceStart>\r\n            <SliceEnd>__SLICE_END__</SliceEnd>\r\n            <SliceLoopStart>0</SliceLoopStart>\r\n            <SliceLoop>0</SliceLoop>\r\n            <SliceLoopCrossFadeLength>__L_XFADE__</SliceLoopCrossFadeLength>\r\n            <SliceTailPosition>0.500000</SliceTailPosition>\r\n            <SliceTailLength>0.000000</SliceTailLength>\r\n          </Layer>\r\n          <Layer number=\"2\">\r\n            <Active>True</Active>\r\n            <Volume>1.000000</Volume>\r\n            <Pan>0.500000</Pan>\r\n            <Pitch>0.000000</Pitch>\r\n            <TuneCoarse>0</TuneCoarse>\r\n            <TuneFine>0</TuneFine>\r\n            <VelStart>0</VelStart>\r\n            <VelEnd>127</VelEnd>\r\n            <SampleStart>0</SampleStart>\r\n            <SampleEnd>0</SampleEnd>\r\n            <LoopStart>0</LoopStart>\r\n            <LoopEnd>0</LoopEnd>\r\n            <LoopCrossfadeLength>0</LoopCrossfadeLength>\r\n            <LoopTune>0</LoopTune>\r\n            <RootNote>0</RootNote>\r\n            <KeyTrack>False</KeyTrack>\r\n            <SampleName></SampleName>\r\n            <PitchRandom>0.000000</PitchRandom>\r\n            <VolumeRandom>0.000000</VolumeRandom>\r\n            <PanRandom>0.000000</PanRandom>\r\n            <OffsetRandom>0.000000</OffsetRandom>\r\n            <SliceIncrement>0</SliceIncrement>\r\n            <SliceCycleLength>1</SliceCycleLength>\r\n            <SliceIncrementRngSeed>1481823872</SliceIncrementRngSeed>\r\n            <SampleFile></SampleFile>\r\n            <SliceIndex>129</SliceIndex>\r\n            <Direction>0</Direction>\r\n            <Offset>0</Offset>\r\n            <SliceStart>0</SliceStart>\r\n            <SliceEnd>0</SliceEnd>\r\n            <SliceLoopStart>0</SliceLoopStart>\r\n            <SliceLoop>0</SliceLoop>\r\n            <SliceLoopCrossFadeLength>0</SliceLoopCrossFadeLength>\r\n            <SliceTailPosition>0.500000</SliceTailPosition>\r\n            <SliceTailLength>0.000000</SliceTailLength>\r\n          </Layer>\r\n          <Layer number=\"3\">\r\n            <Active>True</Active>\r\n            <Volume>1.000000</Volume>\r\n            <Pan>0.500000</Pan>\r\n            <Pitch>0.000000</Pitch>\r\n            <TuneCoarse>0</TuneCoarse>\r\n            <TuneFine>0</TuneFine>\r\n            <VelStart>0</VelStart>\r\n            <VelEnd>127</VelEnd>\r\n            <SampleStart>0</SampleStart>\r\n            <SampleEnd>0</SampleEnd>\r\n            <LoopStart>0</LoopStart>\r\n            <LoopEnd>0</LoopEnd>\r\n            <LoopCrossfadeLength>0</LoopCrossfadeLength>\r\n            <LoopTune>0</LoopTune>\r\n            <RootNote>0</RootNote>\r\n            <KeyTrack>False</KeyTrack>\r\n            <SampleName></SampleName>\r\n            <PitchRandom>0.000000</PitchRandom>\r\n            <VolumeRandom>0.000000</VolumeRandom>\r\n            <PanRandom>0.000000</PanRandom>\r\n            <OffsetRandom>0.000000</OffsetRandom>\r\n            <SliceIncrement>0</SliceIncrement>\r\n            <SliceCycleLength>1</SliceCycleLength>\r\n            <SliceIncrementRngSeed>728599104</SliceIncrementRngSeed>\r\n            <SampleFile></SampleFile>\r\n            <SliceIndex>129</SliceIndex>\r\n            <Direction>0</Direction>\r\n            <Offset>0</Offset>\r\n            <SliceStart>0</SliceStart>\r\n            <SliceEnd>0</SliceEnd>\r\n            <SliceLoopStart>0</SliceLoopStart>\r\n            <SliceLoop>0</SliceLoop>\r\n            <SliceLoopCrossFadeLength>0</SliceLoopCrossFadeLength>\r\n            <SliceTailPosition>0.500000</SliceTailPosition>\r\n            <SliceTailLength>0.000000</SliceTailLength>\r\n          </Layer>\r\n          <Layer number=\"4\">\r\n            <Active>True</Active>\r\n            <Volume>1.000000</Volume>\r\n            <Pan>0.500000</Pan>\r\n            <Pitch>0.000000</Pitch>\r\n            <TuneCoarse>0</TuneCoarse>\r\n            <TuneFine>0</TuneFine>\r\n            <VelStart>0</VelStart>\r\n            <VelEnd>127</VelEnd>\r\n            <SampleStart>0</SampleStart>\r\n            <SampleEnd>0</SampleEnd>\r\n            <LoopStart>0</LoopStart>\r\n            <LoopEnd>0</LoopEnd>\r\n            <LoopCrossfadeLength>0</LoopCrossfadeLength>\r\n            <LoopTune>0</LoopTune>\r\n            <RootNote>0</RootNote>\r\n            <KeyTrack>False</KeyTrack>\r\n            <SampleName></SampleName>\r\n            <PitchRandom>0.000000</PitchRandom>\r\n            <VolumeRandom>0.000000</VolumeRandom>\r\n            <PanRandom>0.000000</PanRandom>\r\n            <OffsetRandom>0.000000</OffsetRandom>\r\n            <SliceIncrement>0</SliceIncrement>\r\n            <SliceCycleLength>1</SliceCycleLength>\r\n            <SliceIncrementRngSeed>864556672</SliceIncrementRngSeed>\r\n            <SampleFile></SampleFile>\r\n            <SliceIndex>129</SliceIndex>\r\n            <Direction>0</Direction>\r\n            <Offset>0</Offset>\r\n            <SliceStart>0</SliceStart>\r\n            <SliceEnd>0</SliceEnd>\r\n            <SliceLoopStart>0</SliceLoopStart>\r\n            <SliceLoop>0</SliceLoop>\r\n            <SliceLoopCrossFadeLength>0</SliceLoopCrossFadeLength>\r\n            <SliceTailPosition>0.500000</SliceTailPosition>\r\n            <SliceTailLength>0.000000</SliceTailLength>\r\n          </Layer>\r\n          <Layer number=\"5\">\r\n            <Active>True</Active>\r\n            <Volume>1.000000</Volume>\r\n            <Pan>0.500000</Pan>\r\n            <Pitch>0.000000</Pitch>\r\n            <TuneCoarse>0</TuneCoarse>\r\n            <TuneFine>0</TuneFine>\r\n            <VelStart>0</VelStart>\r\n            <VelEnd>127</VelEnd>\r\n            <SampleStart>0</SampleStart>\r\n            <SampleEnd>0</SampleEnd>\r\n            <LoopStart>0</LoopStart>\r\n            <LoopEnd>0</LoopEnd>\r\n            <LoopCrossfadeLength>0</LoopCrossfadeLength>\r\n            <LoopTune>0</LoopTune>\r\n            <RootNote>0</RootNote>\r\n            <KeyTrack>False</KeyTrack>\r\n            <SampleName></SampleName>\r\n            <PitchRandom>0.000000</PitchRandom>\r\n            <VolumeRandom>0.000000</VolumeRandom>\r\n            <PanRandom>0.000000</PanRandom>\r\n            <OffsetRandom>0.000000</OffsetRandom>\r\n            <SliceIncrement>0</SliceIncrement>\r\n            <SliceCycleLength>1</SliceCycleLength>\r\n            <SliceIncrementRngSeed>959203968</SliceIncrementRngSeed>\r\n            <SampleFile></SampleFile>\r\n            <SliceIndex>129</SliceIndex>\r\n            <Direction>0</Direction>\r\n            <Offset>0</Offset>\r\n            <SliceStart>0</SliceStart>\r\n            <SliceEnd>0</SliceEnd>\r\n            <SliceLoopStart>0</SliceLoopStart>\r\n            <SliceLoop>0</SliceLoop>\r\n            <SliceLoopCrossFadeLength>0</SliceLoopCrossFadeLength>\r\n            <SliceTailPosition>0.500000</SliceTailPosition>\r\n            <SliceTailLength>0.000000</SliceTailLength>\r\n          </Layer>\r\n          <Layer number=\"6\">\r\n            <Active>True</Active>\r\n            <Volume>1.000000</Volume>\r\n            <Pan>0.500000</Pan>\r\n            <Pitch>0.000000</Pitch>\r\n            <TuneCoarse>0</TuneCoarse>\r\n            <TuneFine>0</TuneFine>\r\n            <VelStart>0</VelStart>\r\n            <VelEnd>127</VelEnd>\r\n            <SampleStart>0</SampleStart>\r\n            <SampleEnd>0</SampleEnd>\r\n            <LoopStart>0</LoopStart>\r\n            <LoopEnd>0</LoopEnd>\r\n            <LoopCrossfadeLength>0</LoopCrossfadeLength>\r\n            <LoopTune>0</LoopTune>\r\n            <RootNote>0</RootNote>\r\n            <KeyTrack>False</KeyTrack>\r\n            <SampleName></SampleName>\r\n            <PitchRandom>0.000000</PitchRandom>\r\n            <VolumeRandom>0.000000</VolumeRandom>\r\n            <PanRandom>0.000000</PanRandom>\r\n            <OffsetRandom>0.000000</OffsetRandom>\r\n            <SliceIncrement>0</SliceIncrement>\r\n            <SliceCycleLength>1</SliceCycleLength>\r\n            <SliceIncrementRngSeed>1981110016</SliceIncrementRngSeed>\r\n            <SampleFile></SampleFile>\r\n            <SliceIndex>129</SliceIndex>\r\n            <Direction>0</Direction>\r\n            <Offset>0</Offset>\r\n            <SliceStart>0</SliceStart>\r\n            <SliceEnd>0</SliceEnd>\r\n            <SliceLoopStart>0</SliceLoopStart>\r\n            <SliceLoop>0</SliceLoop>\r\n            <SliceLoopCrossFadeLength>0</SliceLoopCrossFadeLength>\r\n            <SliceTailPosition>0.500000</SliceTailPosition>\r\n            <SliceTailLength>0.000000</SliceTailLength>\r\n          </Layer>\r\n          <Layer number=\"7\">\r\n            <Active>True</Active>\r\n            <Volume>1.000000</Volume>\r\n            <Pan>0.500000</Pan>\r\n            <Pitch>0.000000</Pitch>\r\n            <TuneCoarse>0</TuneCoarse>\r\n            <TuneFine>0</TuneFine>\r\n            <VelStart>0</VelStart>\r\n            <VelEnd>127</VelEnd>\r\n            <SampleStart>0</SampleStart>\r\n            <SampleEnd>0</SampleEnd>\r\n            <LoopStart>0</LoopStart>\r\n            <LoopEnd>0</LoopEnd>\r\n            <LoopCrossfadeLength>0</LoopCrossfadeLength>\r\n            <LoopTune>0</LoopTune>\r\n            <RootNote>0</RootNote>\r\n            <KeyTrack>False</KeyTrack>\r\n            <SampleName></SampleName>\r\n            <PitchRandom>0.000000</PitchRandom>\r\n            <VolumeRandom>0.000000</VolumeRandom>\r\n            <PanRandom>0.000000</PanRandom>\r\n            <OffsetRandom>0.000000</OffsetRandom>\r\n            <SliceIncrement>0</SliceIncrement>\r\n            <SliceCycleLength>1</SliceCycleLength>\r\n            <SliceIncrementRngSeed>554895936</SliceIncrementRngSeed>\r\n            <SampleFile></SampleFile>\r\n            <SliceIndex>129</SliceIndex>\r\n            <Direction>0</Direction>\r\n            <Offset>0</Offset>\r\n            <SliceStart>0</SliceStart>\r\n            <SliceEnd>0</SliceEnd>\r\n            <SliceLoopStart>0</SliceLoopStart>\r\n            <SliceLoop>0</SliceLoop>\r\n            <SliceLoopCrossFadeLength>0</SliceLoopCrossFadeLength>\r\n            <SliceTailPosition>0.500000</SliceTailPosition>\r\n            <SliceTailLength>0.000000</SliceTailLength>\r\n          </Layer>\r\n          <Layer number=\"8\">\r\n            <Active>True</Active>\r\n            <Volume>1.000000</Volume>\r\n            <Pan>0.500000</Pan>\r\n            <Pitch>0.000000</Pitch>\r\n            <TuneCoarse>0</TuneCoarse>\r\n            <TuneFine>0</TuneFine>\r\n            <VelStart>0</VelStart>\r\n            <VelEnd>127</VelEnd>\r\n            <SampleStart>0</SampleStart>\r\n            <SampleEnd>0</SampleEnd>\r\n            <LoopStart>0</LoopStart>\r\n            <LoopEnd>0</LoopEnd>\r\n            <LoopCrossfadeLength>0</LoopCrossfadeLength>\r\n            <LoopTune>0</LoopTune>\r\n            <RootNote>0</RootNote>\r\n            <KeyTrack>False</KeyTrack>\r\n            <SampleName></SampleName>\r\n            <PitchRandom>0.000000</PitchRandom>\r\n            <VolumeRandom>0.000000</VolumeRandom>\r\n            <PanRandom>0.000000</PanRandom>\r\n            <OffsetRandom>0.000000</OffsetRandom>\r\n            <SliceIncrement>0</SliceIncrement>\r\n            <SliceCycleLength>1</SliceCycleLength>\r\n            <SliceIncrementRngSeed>1962579712</SliceIncrementRngSeed>\r\n            <SampleFile></SampleFile>\r\n            <SliceIndex>129</SliceIndex>\r\n            <Direction>0</Direction>\r\n            <Offset>0</Offset>\r\n            <SliceStart>0</SliceStart>\r\n            <SliceEnd>0</SliceEnd>\r\n            <SliceLoopStart>0</SliceLoopStart>\r\n            <SliceLoop>0</SliceLoop>\r\n            <SliceLoopCrossFadeLength>0</SliceLoopCrossFadeLength>\r\n            <SliceTailPosition>0.500000</SliceTailPosition>\r\n            <SliceTailLength>0.000000</SliceTailLength>\r\n          </Layer>\r\n        </Layers>\r\n      </Instrument>\r\n",
+  mpc3_tail: "    </Instruments>\r\n    <PadNoteMap>\r\n      <PadNote number=\"1\">\r\n        <Note>36</Note>\r\n      </PadNote>\r\n      <PadNote number=\"2\">\r\n        <Note>37</Note>\r\n      </PadNote>\r\n      <PadNote number=\"3\">\r\n        <Note>38</Note>\r\n      </PadNote>\r\n      <PadNote number=\"4\">\r\n        <Note>39</Note>\r\n      </PadNote>\r\n      <PadNote number=\"5\">\r\n        <Note>40</Note>\r\n      </PadNote>\r\n      <PadNote number=\"6\">\r\n        <Note>41</Note>\r\n      </PadNote>\r\n      <PadNote number=\"7\">\r\n        <Note>42</Note>\r\n      </PadNote>\r\n      <PadNote number=\"8\">\r\n        <Note>43</Note>\r\n      </PadNote>\r\n      <PadNote number=\"9\">\r\n        <Note>44</Note>\r\n      </PadNote>\r\n      <PadNote number=\"10\">\r\n        <Note>45</Note>\r\n      </PadNote>\r\n      <PadNote number=\"11\">\r\n        <Note>46</Note>\r\n      </PadNote>\r\n      <PadNote number=\"12\">\r\n        <Note>47</Note>\r\n      </PadNote>\r\n      <PadNote number=\"13\">\r\n        <Note>48</Note>\r\n      </PadNote>\r\n      <PadNote number=\"14\">\r\n        <Note>49</Note>\r\n      </PadNote>\r\n      <PadNote number=\"15\">\r\n        <Note>50</Note>\r\n      </PadNote>\r\n      <PadNote number=\"16\">\r\n        <Note>51</Note>\r\n      </PadNote>\r\n      <PadNote number=\"17\">\r\n        <Note>52</Note>\r\n      </PadNote>\r\n      <PadNote number=\"18\">\r\n        <Note>53</Note>\r\n      </PadNote>\r\n      <PadNote number=\"19\">\r\n        <Note>54</Note>\r\n      </PadNote>\r\n      <PadNote number=\"20\">\r\n        <Note>55</Note>\r\n      </PadNote>\r\n      <PadNote number=\"21\">\r\n        <Note>56</Note>\r\n      </PadNote>\r\n      <PadNote number=\"22\">\r\n        <Note>57</Note>\r\n      </PadNote>\r\n      <PadNote number=\"23\">\r\n        <Note>58</Note>\r\n      </PadNote>\r\n      <PadNote number=\"24\">\r\n        <Note>59</Note>\r\n      </PadNote>\r\n      <PadNote number=\"25\">\r\n        <Note>60</Note>\r\n      </PadNote>\r\n      <PadNote number=\"26\">\r\n        <Note>61</Note>\r\n      </PadNote>\r\n      <PadNote number=\"27\">\r\n        <Note>62</Note>\r\n      </PadNote>\r\n      <PadNote number=\"28\">\r\n        <Note>63</Note>\r\n      </PadNote>\r\n      <PadNote number=\"29\">\r\n        <Note>64</Note>\r\n      </PadNote>\r\n      <PadNote number=\"30\">\r\n        <Note>65</Note>\r\n      </PadNote>\r\n      <PadNote number=\"31\">\r\n        <Note>66</Note>\r\n      </PadNote>\r\n      <PadNote number=\"32\">\r\n        <Note>67</Note>\r\n      </PadNote>\r\n      <PadNote number=\"33\">\r\n        <Note>68</Note>\r\n      </PadNote>\r\n      <PadNote number=\"34\">\r\n        <Note>69</Note>\r\n      </PadNote>\r\n      <PadNote number=\"35\">\r\n        <Note>70</Note>\r\n      </PadNote>\r\n      <PadNote number=\"36\">\r\n        <Note>71</Note>\r\n      </PadNote>\r\n      <PadNote number=\"37\">\r\n        <Note>72</Note>\r\n      </PadNote>\r\n      <PadNote number=\"38\">\r\n        <Note>73</Note>\r\n      </PadNote>\r\n      <PadNote number=\"39\">\r\n        <Note>74</Note>\r\n      </PadNote>\r\n      <PadNote number=\"40\">\r\n        <Note>75</Note>\r\n      </PadNote>\r\n      <PadNote number=\"41\">\r\n        <Note>76</Note>\r\n      </PadNote>\r\n      <PadNote number=\"42\">\r\n        <Note>77</Note>\r\n      </PadNote>\r\n      <PadNote number=\"43\">\r\n        <Note>78</Note>\r\n      </PadNote>\r\n      <PadNote number=\"44\">\r\n        <Note>79</Note>\r\n      </PadNote>\r\n      <PadNote number=\"45\">\r\n        <Note>80</Note>\r\n      </PadNote>\r\n      <PadNote number=\"46\">\r\n        <Note>81</Note>\r\n      </PadNote>\r\n      <PadNote number=\"47\">\r\n        <Note>82</Note>\r\n      </PadNote>\r\n      <PadNote number=\"48\">\r\n        <Note>83</Note>\r\n      </PadNote>\r\n      <PadNote number=\"49\">\r\n        <Note>84</Note>\r\n      </PadNote>\r\n      <PadNote number=\"50\">\r\n        <Note>85</Note>\r\n      </PadNote>\r\n      <PadNote number=\"51\">\r\n        <Note>86</Note>\r\n      </PadNote>\r\n      <PadNote number=\"52\">\r\n        <Note>87</Note>\r\n      </PadNote>\r\n      <PadNote number=\"53\">\r\n        <Note>88</Note>\r\n      </PadNote>\r\n      <PadNote number=\"54\">\r\n        <Note>89</Note>\r\n      </PadNote>\r\n      <PadNote number=\"55\">\r\n        <Note>90</Note>\r\n      </PadNote>\r\n      <PadNote number=\"56\">\r\n        <Note>91</Note>\r\n      </PadNote>\r\n      <PadNote number=\"57\">\r\n        <Note>92</Note>\r\n      </PadNote>\r\n      <PadNote number=\"58\">\r\n        <Note>93</Note>\r\n      </PadNote>\r\n      <PadNote number=\"59\">\r\n        <Note>94</Note>\r\n      </PadNote>\r\n      <PadNote number=\"60\">\r\n        <Note>95</Note>\r\n      </PadNote>\r\n      <PadNote number=\"61\">\r\n        <Note>96</Note>\r\n      </PadNote>\r\n      <PadNote number=\"62\">\r\n        <Note>97</Note>\r\n      </PadNote>\r\n      <PadNote number=\"63\">\r\n        <Note>98</Note>\r\n      </PadNote>\r\n      <PadNote number=\"64\">\r\n        <Note>99</Note>\r\n      </PadNote>\r\n      <PadNote number=\"65\">\r\n        <Note>100</Note>\r\n      </PadNote>\r\n      <PadNote number=\"66\">\r\n        <Note>101</Note>\r\n      </PadNote>\r\n      <PadNote number=\"67\">\r\n        <Note>102</Note>\r\n      </PadNote>\r\n      <PadNote number=\"68\">\r\n        <Note>103</Note>\r\n      </PadNote>\r\n      <PadNote number=\"69\">\r\n        <Note>104</Note>\r\n      </PadNote>\r\n      <PadNote number=\"70\">\r\n        <Note>105</Note>\r\n      </PadNote>\r\n      <PadNote number=\"71\">\r\n        <Note>106</Note>\r\n      </PadNote>\r\n      <PadNote number=\"72\">\r\n        <Note>107</Note>\r\n      </PadNote>\r\n      <PadNote number=\"73\">\r\n        <Note>108</Note>\r\n      </PadNote>\r\n      <PadNote number=\"74\">\r\n        <Note>109</Note>\r\n      </PadNote>\r\n      <PadNote number=\"75\">\r\n        <Note>110</Note>\r\n      </PadNote>\r\n      <PadNote number=\"76\">\r\n        <Note>111</Note>\r\n      </PadNote>\r\n      <PadNote number=\"77\">\r\n        <Note>112</Note>\r\n      </PadNote>\r\n      <PadNote number=\"78\">\r\n        <Note>113</Note>\r\n      </PadNote>\r\n      <PadNote number=\"79\">\r\n        <Note>114</Note>\r\n      </PadNote>\r\n      <PadNote number=\"80\">\r\n        <Note>115</Note>\r\n      </PadNote>\r\n      <PadNote number=\"81\">\r\n        <Note>116</Note>\r\n      </PadNote>\r\n      <PadNote number=\"82\">\r\n        <Note>117</Note>\r\n      </PadNote>\r\n      <PadNote number=\"83\">\r\n        <Note>118</Note>\r\n      </PadNote>\r\n      <PadNote number=\"84\">\r\n        <Note>119</Note>\r\n      </PadNote>\r\n      <PadNote number=\"85\">\r\n        <Note>120</Note>\r\n      </PadNote>\r\n      <PadNote number=\"86\">\r\n        <Note>121</Note>\r\n      </PadNote>\r\n      <PadNote number=\"87\">\r\n        <Note>122</Note>\r\n      </PadNote>\r\n      <PadNote number=\"88\">\r\n        <Note>123</Note>\r\n      </PadNote>\r\n      <PadNote number=\"89\">\r\n        <Note>124</Note>\r\n      </PadNote>\r\n      <PadNote number=\"90\">\r\n        <Note>125</Note>\r\n      </PadNote>\r\n      <PadNote number=\"91\">\r\n        <Note>126</Note>\r\n      </PadNote>\r\n      <PadNote number=\"92\">\r\n        <Note>127</Note>\r\n      </PadNote>\r\n      <PadNote number=\"93\">\r\n        <Note>0</Note>\r\n      </PadNote>\r\n      <PadNote number=\"94\">\r\n        <Note>1</Note>\r\n      </PadNote>\r\n      <PadNote number=\"95\">\r\n        <Note>2</Note>\r\n      </PadNote>\r\n      <PadNote number=\"96\">\r\n        <Note>3</Note>\r\n      </PadNote>\r\n      <PadNote number=\"97\">\r\n        <Note>4</Note>\r\n      </PadNote>\r\n      <PadNote number=\"98\">\r\n        <Note>5</Note>\r\n      </PadNote>\r\n      <PadNote number=\"99\">\r\n        <Note>6</Note>\r\n      </PadNote>\r\n      <PadNote number=\"100\">\r\n        <Note>7</Note>\r\n      </PadNote>\r\n      <PadNote number=\"101\">\r\n        <Note>8</Note>\r\n      </PadNote>\r\n      <PadNote number=\"102\">\r\n        <Note>9</Note>\r\n      </PadNote>\r\n      <PadNote number=\"103\">\r\n        <Note>10</Note>\r\n      </PadNote>\r\n      <PadNote number=\"104\">\r\n        <Note>11</Note>\r\n      </PadNote>\r\n      <PadNote number=\"105\">\r\n        <Note>12</Note>\r\n      </PadNote>\r\n      <PadNote number=\"106\">\r\n        <Note>13</Note>\r\n      </PadNote>\r\n      <PadNote number=\"107\">\r\n        <Note>14</Note>\r\n      </PadNote>\r\n      <PadNote number=\"108\">\r\n        <Note>15</Note>\r\n      </PadNote>\r\n      <PadNote number=\"109\">\r\n        <Note>16</Note>\r\n      </PadNote>\r\n      <PadNote number=\"110\">\r\n        <Note>17</Note>\r\n      </PadNote>\r\n      <PadNote number=\"111\">\r\n        <Note>18</Note>\r\n      </PadNote>\r\n      <PadNote number=\"112\">\r\n        <Note>19</Note>\r\n      </PadNote>\r\n      <PadNote number=\"113\">\r\n        <Note>20</Note>\r\n      </PadNote>\r\n      <PadNote number=\"114\">\r\n        <Note>21</Note>\r\n      </PadNote>\r\n      <PadNote number=\"115\">\r\n        <Note>22</Note>\r\n      </PadNote>\r\n      <PadNote number=\"116\">\r\n        <Note>23</Note>\r\n      </PadNote>\r\n      <PadNote number=\"117\">\r\n        <Note>24</Note>\r\n      </PadNote>\r\n      <PadNote number=\"118\">\r\n        <Note>25</Note>\r\n      </PadNote>\r\n      <PadNote number=\"119\">\r\n        <Note>26</Note>\r\n      </PadNote>\r\n      <PadNote number=\"120\">\r\n        <Note>27</Note>\r\n      </PadNote>\r\n      <PadNote number=\"121\">\r\n        <Note>28</Note>\r\n      </PadNote>\r\n      <PadNote number=\"122\">\r\n        <Note>29</Note>\r\n      </PadNote>\r\n      <PadNote number=\"123\">\r\n        <Note>30</Note>\r\n      </PadNote>\r\n      <PadNote number=\"124\">\r\n        <Note>31</Note>\r\n      </PadNote>\r\n      <PadNote number=\"125\">\r\n        <Note>32</Note>\r\n      </PadNote>\r\n      <PadNote number=\"126\">\r\n        <Note>33</Note>\r\n      </PadNote>\r\n      <PadNote number=\"127\">\r\n        <Note>34</Note>\r\n      </PadNote>\r\n      <PadNote number=\"128\">\r\n        <Note>35</Note>\r\n      </PadNote>\r\n    </PadNoteMap>\r\n    <PadGroupMap>\r\n      <PadGroup number=\"1\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"2\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"3\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"4\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"5\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"6\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"7\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"8\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"9\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"10\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"11\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"12\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"13\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"14\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"15\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"16\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"17\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"18\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"19\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"20\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"21\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"22\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"23\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"24\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"25\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"26\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"27\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"28\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"29\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"30\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"31\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"32\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"33\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"34\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"35\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"36\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"37\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"38\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"39\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"40\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"41\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"42\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"43\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"44\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"45\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"46\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"47\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"48\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"49\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"50\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"51\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"52\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"53\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"54\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"55\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"56\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"57\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"58\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"59\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"60\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"61\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"62\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"63\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"64\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"65\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"66\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"67\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"68\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"69\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"70\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"71\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"72\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"73\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"74\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"75\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"76\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"77\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"78\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"79\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"80\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"81\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"82\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"83\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"84\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"85\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"86\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"87\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"88\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"89\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"90\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"91\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"92\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"93\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"94\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"95\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"96\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"97\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"98\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"99\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"100\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"101\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"102\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"103\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"104\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"105\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"106\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"107\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"108\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"109\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"110\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"111\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"112\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"113\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"114\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"115\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"116\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"117\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"118\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"119\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"120\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"121\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"122\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"123\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"124\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"125\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"126\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"127\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n      <PadGroup number=\"128\">\r\n        <Group>0</Group>\r\n      </PadGroup>\r\n    </PadGroupMap>\r\n  </Program>\r\n</MPCVObject>\r\n",
+  adg_head: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Ableton MajorVersion=\"5\" MinorVersion=\"12.0_12300\" SchemaChangeCount=\"1\" Creator=\"Ableton Live 12.3\" Revision=\"49ca8995cfdbe384bd4648a2e0d5a14dba7b993d\">\n\t<GroupDevicePreset>\n\t\t<OverwriteProtectionNumber Value=\"3075\" />\n\t\t<Device>\n\t\t\t<DrumGroupDevice Id=\"0\">\n\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t<LomIdView Value=\"0\" />\n\t\t\t\t<IsExpanded Value=\"true\" />\n\t\t\t\t<BreakoutIsExpanded Value=\"false\" />\n\t\t\t\t<On>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"true\" />\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t</On>\n\t\t\t\t<ModulationSourceCount Value=\"0\" />\n\t\t\t\t<ParametersListWrapper LomId=\"0\" />\n\t\t\t\t<Pointee Id=\"0\" />\n\t\t\t\t<LastSelectedTimeableIndex Value=\"0\" />\n\t\t\t\t<LastSelectedClipEnvelopeIndex Value=\"0\" />\n\t\t\t\t<LastPresetRef>\n\t\t\t\t\t<Value>\n\t\t\t\t\t\t<FilePresetRef Id=\"0\">\n\t\t\t\t\t\t\t<FileRef>\n\t\t\t\t\t\t\t\t<RelativePathType Value=\"6\" />\n\t\t\t\t\t\t\t\t<RelativePath Value=\"Presets/Instruments/Drum Rack/TOKYO_36.adg\" />\n\t\t\t\t\t\t\t\t<Path Value=\"/Users/kacpernowak/Music/Ableton/User Library/Presets/Instruments/Drum Rack/TOKYO_36.adg\" />\n\t\t\t\t\t\t\t\t<Type Value=\"2\" />\n\t\t\t\t\t\t\t\t<LivePackName Value=\"\" />\n\t\t\t\t\t\t\t\t<LivePackId Value=\"\" />\n\t\t\t\t\t\t\t\t<OriginalFileSize Value=\"0\" />\n\t\t\t\t\t\t\t\t<OriginalCrc Value=\"0\" />\n\t\t\t\t\t\t\t\t<SourceHint Value=\"\" />\n\t\t\t\t\t\t\t</FileRef>\n\t\t\t\t\t\t</FilePresetRef>\n\t\t\t\t\t</Value>\n\t\t\t\t</LastPresetRef>\n\t\t\t\t<LockedScripts />\n\t\t\t\t<IsFolded Value=\"false\" />\n\t\t\t\t<ShouldShowPresetName Value=\"true\" />\n\t\t\t\t<UserName Value=\"\" />\n\t\t\t\t<Annotation Value=\"\" />\n\t\t\t\t<SourceContext>\n\t\t\t\t\t<Value />\n\t\t\t\t</SourceContext>\n\t\t\t\t<MpePitchBendUsesTuning Value=\"true\" />\n\t\t\t\t<ViewData Value=\"{}\" />\n\t\t\t\t<OverwriteProtectionNumber Value=\"3075\" />\n\t\t\t\t<Branches />\n\t\t\t\t<IsBranchesListVisible Value=\"false\" />\n\t\t\t\t<IsReturnBranchesListVisible Value=\"false\" />\n\t\t\t\t<IsRangesEditorVisible Value=\"false\" />\n\t\t\t\t<AreDevicesVisible Value=\"true\" />\n\t\t\t\t<NumVisibleMacroControls Value=\"8\" />\n\t\t\t\t<MacroControls.0>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.0>\n\t\t\t\t<MacroControls.1>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.1>\n\t\t\t\t<MacroControls.2>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.2>\n\t\t\t\t<MacroControls.3>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.3>\n\t\t\t\t<MacroControls.4>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.4>\n\t\t\t\t<MacroControls.5>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.5>\n\t\t\t\t<MacroControls.6>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.6>\n\t\t\t\t<MacroControls.7>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.7>\n\t\t\t\t<MacroControls.8>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.8>\n\t\t\t\t<MacroControls.9>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.9>\n\t\t\t\t<MacroControls.10>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.10>\n\t\t\t\t<MacroControls.11>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.11>\n\t\t\t\t<MacroControls.12>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.12>\n\t\t\t\t<MacroControls.13>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.13>\n\t\t\t\t<MacroControls.14>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.14>\n\t\t\t\t<MacroControls.15>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</MacroControls.15>\n\t\t\t\t<MacroDisplayNames.0 Value=\"Macro 1\" />\n\t\t\t\t<MacroDisplayNames.1 Value=\"Macro 2\" />\n\t\t\t\t<MacroDisplayNames.2 Value=\"Macro 3\" />\n\t\t\t\t<MacroDisplayNames.3 Value=\"Macro 4\" />\n\t\t\t\t<MacroDisplayNames.4 Value=\"Macro 5\" />\n\t\t\t\t<MacroDisplayNames.5 Value=\"Macro 6\" />\n\t\t\t\t<MacroDisplayNames.6 Value=\"Macro 7\" />\n\t\t\t\t<MacroDisplayNames.7 Value=\"Macro 8\" />\n\t\t\t\t<MacroDisplayNames.8 Value=\"Macro 9\" />\n\t\t\t\t<MacroDisplayNames.9 Value=\"Macro 10\" />\n\t\t\t\t<MacroDisplayNames.10 Value=\"Macro 11\" />\n\t\t\t\t<MacroDisplayNames.11 Value=\"Macro 12\" />\n\t\t\t\t<MacroDisplayNames.12 Value=\"Macro 13\" />\n\t\t\t\t<MacroDisplayNames.13 Value=\"Macro 14\" />\n\t\t\t\t<MacroDisplayNames.14 Value=\"Macro 15\" />\n\t\t\t\t<MacroDisplayNames.15 Value=\"Macro 16\" />\n\t\t\t\t<MacroDefaults.0 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.1 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.2 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.3 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.4 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.5 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.6 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.7 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.8 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.9 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.10 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.11 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.12 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.13 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.14 Value=\"-1\" />\n\t\t\t\t<MacroDefaults.15 Value=\"-1\" />\n\t\t\t\t<MacroAnnotations.0 Value=\"\" />\n\t\t\t\t<MacroAnnotations.1 Value=\"\" />\n\t\t\t\t<MacroAnnotations.2 Value=\"\" />\n\t\t\t\t<MacroAnnotations.3 Value=\"\" />\n\t\t\t\t<MacroAnnotations.4 Value=\"\" />\n\t\t\t\t<MacroAnnotations.5 Value=\"\" />\n\t\t\t\t<MacroAnnotations.6 Value=\"\" />\n\t\t\t\t<MacroAnnotations.7 Value=\"\" />\n\t\t\t\t<MacroAnnotations.8 Value=\"\" />\n\t\t\t\t<MacroAnnotations.9 Value=\"\" />\n\t\t\t\t<MacroAnnotations.10 Value=\"\" />\n\t\t\t\t<MacroAnnotations.11 Value=\"\" />\n\t\t\t\t<MacroAnnotations.12 Value=\"\" />\n\t\t\t\t<MacroAnnotations.13 Value=\"\" />\n\t\t\t\t<MacroAnnotations.14 Value=\"\" />\n\t\t\t\t<MacroAnnotations.15 Value=\"\" />\n\t\t\t\t<ForceDisplayGenericValue.0 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.1 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.2 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.3 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.4 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.5 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.6 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.7 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.8 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.9 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.10 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.11 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.12 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.13 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.14 Value=\"false\" />\n\t\t\t\t<ForceDisplayGenericValue.15 Value=\"false\" />\n\t\t\t\t<AreMacroControlsVisible Value=\"false\" />\n\t\t\t\t<IsAutoSelectEnabled Value=\"true\" />\n\t\t\t\t<ChainSelector>\n\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t</ModulationTarget>\n\t\t\t\t</ChainSelector>\n\t\t\t\t<ChainSelectorRelativePosition Value=\"-1073741824\" />\n\t\t\t\t<ViewsToRestoreWhenUnfolding Value=\"0\" />\n\t\t\t\t<ReturnBranches />\n\t\t\t\t<BranchesSplitterProportion Value=\"0.5\" />\n\t\t\t\t<ShowBranchesInSessionMixer Value=\"false\" />\n\t\t\t\t<MacroColor.0 Value=\"-1\" />\n\t\t\t\t<MacroColor.1 Value=\"-1\" />\n\t\t\t\t<MacroColor.2 Value=\"-1\" />\n\t\t\t\t<MacroColor.3 Value=\"-1\" />\n\t\t\t\t<MacroColor.4 Value=\"-1\" />\n\t\t\t\t<MacroColor.5 Value=\"-1\" />\n\t\t\t\t<MacroColor.6 Value=\"-1\" />\n\t\t\t\t<MacroColor.7 Value=\"-1\" />\n\t\t\t\t<MacroColor.8 Value=\"-1\" />\n\t\t\t\t<MacroColor.9 Value=\"-1\" />\n\t\t\t\t<MacroColor.10 Value=\"-1\" />\n\t\t\t\t<MacroColor.11 Value=\"-1\" />\n\t\t\t\t<MacroColor.12 Value=\"-1\" />\n\t\t\t\t<MacroColor.13 Value=\"-1\" />\n\t\t\t\t<MacroColor.14 Value=\"-1\" />\n\t\t\t\t<MacroColor.15 Value=\"-1\" />\n\t\t\t\t<LockId Value=\"0\" />\n\t\t\t\t<LockSeal Value=\"0\" />\n\t\t\t\t<ChainsListWrapper LomId=\"0\" />\n\t\t\t\t<ReturnChainsListWrapper LomId=\"0\" />\n\t\t\t\t<MacroVariations>\n\t\t\t\t\t<MacroSnapshots />\n\t\t\t\t</MacroVariations>\n\t\t\t\t<ExcludeMacroFromRandomization.0 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.1 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.2 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.3 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.4 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.5 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.6 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.7 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.8 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.9 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.10 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.11 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.12 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.13 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.14 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromRandomization.15 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.0 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.1 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.2 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.3 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.4 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.5 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.6 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.7 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.8 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.9 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.10 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.11 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.12 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.13 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.14 Value=\"false\" />\n\t\t\t\t<ExcludeMacroFromSnapshots.15 Value=\"false\" />\n\t\t\t\t<AreMacroVariationsControlsVisible Value=\"false\" />\n\t\t\t\t<ChainSelectorFilterMidiCtrl Value=\"false\" />\n\t\t\t\t<RangeTypeIndex Value=\"1\" />\n\t\t\t\t<ShowsZonesInsteadOfNoteNames Value=\"true\" />\n\t\t\t\t<IsMidiSectionVisible Value=\"false\" />\n\t\t\t\t<AreSendsVisible Value=\"false\" />\n\t\t\t\t<ArePadsVisible Value=\"true\" />\n\t\t\t\t<PadScrollPosition Value=\"__PAD_SCROLL_POSITION__\" />\n\t\t\t\t<DrumPadsListWrapper LomId=\"0\" />\n\t\t\t\t<VisibleDrumPadsListWrapper LomId=\"0\" />\n\t\t\t</DrumGroupDevice>\n\t\t</Device>\n\t\t<PresetRef>\n\t\t\t<FilePresetRef Id=\"0\">\n\t\t\t\t<FileRef>\n\t\t\t\t\t<RelativePathType Value=\"6\" />\n\t\t\t\t\t<RelativePath Value=\"Presets/Instruments/Drum Rack/TOKYO_36.adg\" />\n\t\t\t\t\t<Path Value=\"/Users/kacpernowak/Music/Ableton/User Library/Presets/Instruments/Drum Rack/TOKYO_36.adg\" />\n\t\t\t\t\t<Type Value=\"2\" />\n\t\t\t\t\t<LivePackName Value=\"\" />\n\t\t\t\t\t<LivePackId Value=\"\" />\n\t\t\t\t\t<OriginalFileSize Value=\"0\" />\n\t\t\t\t\t<OriginalCrc Value=\"0\" />\n\t\t\t\t\t<SourceHint Value=\"\" />\n\t\t\t\t</FileRef>\n\t\t\t</FilePresetRef>\n\t\t</PresetRef>\n\t\t<BranchPresets>\n\t\t\t",
+  adg_tail: "\n\t\t</BranchPresets>\n\t\t<ReturnBranchPresets />\n\t</GroupDevicePreset>\n</Ableton>\n",
+  adg_pad: "<DrumBranchPreset Id=\"<%- PadNumber %>\">\n\t\t\t\t<Name Value=\"\" />\n\t\t\t\t<IsSoloed Value=\"false\" />\n\t\t\t\t<DevicePresets>\n\t\t\t\t\t<AbletonDevicePreset Id=\"0\">\n\t\t\t\t\t\t<OverwriteProtectionNumber Value=\"3075\" />\n\t\t\t\t\t\t<Device>\n\t\t\t\t\t\t\t<OriginalSimpler Id=\"0\">\n\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t<LomIdView Value=\"0\" />\n\t\t\t\t\t\t\t\t<IsExpanded Value=\"true\" />\n\t\t\t\t\t\t\t\t<BreakoutIsExpanded Value=\"false\" />\n\t\t\t\t\t\t\t\t<On>\n\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<Manual Value=\"true\" />\n\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t</On>\n\t\t\t\t\t\t\t\t<ModulationSourceCount Value=\"0\" />\n\t\t\t\t\t\t\t\t<ParametersListWrapper LomId=\"0\" />\n\t\t\t\t\t\t\t\t<Pointee Id=\"0\" />\n\t\t\t\t\t\t\t\t<LastSelectedTimeableIndex Value=\"0\" />\n\t\t\t\t\t\t\t\t<LastSelectedClipEnvelopeIndex Value=\"0\" />\n\t\t\t\t\t\t\t\t<LastPresetRef>\n\t\t\t\t\t\t\t\t\t<Value>\n\t\t\t\t\t\t\t\t\t\t<AbletonDefaultPresetRef Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<FileRef>\n\t\t\t\t\t\t\t\t\t\t\t\t<RelativePathType Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<RelativePath Value=\"\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Path Value=\"\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Type Value=\"2\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<LivePackName Value=\"\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<LivePackId Value=\"\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<OriginalFileSize Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<OriginalCrc Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<SourceHint Value=\"\" />\n\t\t\t\t\t\t\t\t\t\t\t</FileRef>\n\t\t\t\t\t\t\t\t\t\t\t<DeviceId Name=\"OriginalSimpler\" />\n\t\t\t\t\t\t\t\t\t\t</AbletonDefaultPresetRef>\n\t\t\t\t\t\t\t\t\t</Value>\n\t\t\t\t\t\t\t\t</LastPresetRef>\n\t\t\t\t\t\t\t\t<LockedScripts />\n\t\t\t\t\t\t\t\t<IsFolded Value=\"false\" />\n\t\t\t\t\t\t\t\t<ShouldShowPresetName Value=\"true\" />\n\t\t\t\t\t\t\t\t<UserName Value=\"\" />\n\t\t\t\t\t\t\t\t<Annotation Value=\"\" />\n\t\t\t\t\t\t\t\t<SourceContext>\n\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t</SourceContext>\n\t\t\t\t\t\t\t\t<MpePitchBendUsesTuning Value=\"true\" />\n\t\t\t\t\t\t\t\t<ViewData Value=\"{}\" />\n\t\t\t\t\t\t\t\t<OverwriteProtectionNumber Value=\"3075\" />\n\t\t\t\t\t\t\t\t<Player>\n\t\t\t\t\t\t\t\t\t<MultiSampleMap>\n\t\t\t\t\t\t\t\t\t\t<SampleParts>\n\t\t\t\t\t\t\t\t\t\t\t<MultiSamplePart Id=\"0\" InitUpdateAreSlicesFromOnsetsEditableAfterRead=\"false\" HasImportedSlicePoints=\"true\" NeedsAnalysisData=\"true\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Name Value=\"<%- SampleNameWithoutWav %>\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Selection Value=\"true\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<IsActive Value=\"true\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Solo Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<KeyRange>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<CrossfadeMin Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<CrossfadeMax Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t\t\t</KeyRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<VelocityRange>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<CrossfadeMin Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<CrossfadeMax Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t\t\t</VelocityRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<SelectorRange>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<CrossfadeMin Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<CrossfadeMax Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t\t\t</SelectorRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<RootKey Value=\"60\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Detune Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<TuneScale Value=\"100\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Panorama Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Volume Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Link Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<SampleStart Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<SampleEnd Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<SustainLoop>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Start Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<End Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Mode Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Crossfade Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Detune Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t</SustainLoop>\n\t\t\t\t\t\t\t\t\t\t\t\t<ReleaseLoop>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Start Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<End Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Mode Value=\"3\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Crossfade Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Detune Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t</ReleaseLoop>\n\t\t\t\t\t\t\t\t\t\t\t\t<SampleRef>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<FileRef>\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<RelativePathType Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<RelativePath Value=\"<%- SampleName %>\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<Path Value=\"__SAMPLE_ABS_PATH__\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<Type Value=\"2\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<LivePackName Value=\"\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<LivePackId Value=\"\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<OriginalFileSize Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<OriginalCrc Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<SourceHint Value=\"\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t</FileRef>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<LastModDate Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<SourceContext />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<SampleUsageHint Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<DefaultDuration Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<DefaultSampleRate Value=\"44100\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<SamplesToAutoWarp Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t</SampleRef>\n\t\t\t\t\t\t\t\t\t\t\t\t<SlicingThreshold Value=\"100\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<SlicingBeatGrid Value=\"4\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<SlicingRegions Value=\"8\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<SlicingStyle Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<SampleWarpProperties>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<WarpMarkers>\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<WarpMarker Id=\"0\" SecTime=\"0\" BeatTime=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<WarpMarker Id=\"1\" SecTime=\"0.015625\" BeatTime=\"0.03125\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t</WarpMarkers>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<WarpMode Value=\"4\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<GranularityTones Value=\"30\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<GranularityTexture Value=\"65\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<FluctuationTexture Value=\"25\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<ComplexProFormants Value=\"100\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<ComplexProEnvelope Value=\"128\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<TransientResolution Value=\"6\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<TransientLoopMode Value=\"2\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<TransientEnvelope Value=\"100\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<IsWarped Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t<Onsets>\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<UserOnsets />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<HasUserOnsets Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t</Onsets>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<TimeSignature>\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<TimeSignatures>\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t<RemoteableTimeSignature Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t<Numerator Value=\"4\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t<Denominator Value=\"4\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t<Time Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t</RemoteableTimeSignature>\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t</TimeSignatures>\n\t\t\t\t\t\t\t\t\t\t\t\t\t</TimeSignature>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<BeatGrid>\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<FixedNumerator Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<FixedDenominator Value=\"16\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<GridIntervalPixel Value=\"20\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<Ntoles Value=\"2\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<SnapToGrid Value=\"true\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t<Fixed Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t\t\t\t</BeatGrid>\n\t\t\t\t\t\t\t\t\t\t\t\t</SampleWarpProperties>\n\t\t\t\t\t\t\t\t\t\t\t\t<InitialSlicePointsFromOnsets>\n\t\t\t\t\t\t\t\t\t\t\t\t\t<SlicePoint TimeInSeconds=\"0.000612244897959183642\" Rank=\"0\" NormalizedEnergy=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t</InitialSlicePointsFromOnsets>\n\t\t\t\t\t\t\t\t\t\t\t\t<SlicePoints />\n\t\t\t\t\t\t\t\t\t\t\t\t<ManualSlicePoints />\n\t\t\t\t\t\t\t\t\t\t\t\t<BeatSlicePoints />\n\t\t\t\t\t\t\t\t\t\t\t\t<RegionSlicePoints />\n\t\t\t\t\t\t\t\t\t\t\t\t<UseDynamicBeatSlices Value=\"true\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<UseDynamicRegionSlices Value=\"true\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<AreSlicesFromOnsetsEditable Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t\t</MultiSamplePart>\n\t\t\t\t\t\t\t\t\t\t</SampleParts>\n\t\t\t\t\t\t\t\t\t\t<LoadInRam Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t<LayerCrossfade Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<SourceContext />\n\t\t\t\t\t\t\t\t\t\t<RoundRobin Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t<RoundRobinMode Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<RoundRobinResetPeriod Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<RoundRobinRandomSeed Value=\"150635738\" />\n\t\t\t\t\t\t\t\t\t</MultiSampleMap>\n\t\t\t\t\t\t\t\t\t<LoopModulators>\n\t\t\t\t\t\t\t\t\t\t<IsModulated Value=\"true\" />\n\t\t\t\t\t\t\t\t\t\t<SampleStart>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</SampleStart>\n\t\t\t\t\t\t\t\t\t\t<SampleLength>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</SampleLength>\n\t\t\t\t\t\t\t\t\t\t<LoopOn>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t</LoopOn>\n\t\t\t\t\t\t\t\t\t\t<LoopLength>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</LoopLength>\n\t\t\t\t\t\t\t\t\t\t<LoopFade>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</LoopFade>\n\t\t\t\t\t\t\t\t\t</LoopModulators>\n\t\t\t\t\t\t\t\t\t<Reverse>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t</Reverse>\n\t\t\t\t\t\t\t\t\t<Snap>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"true\" />\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t</Snap>\n\t\t\t\t\t\t\t\t\t<SampleSelector>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</SampleSelector>\n\t\t\t\t\t\t\t\t\t<SubOsc>\n\t\t\t\t\t\t\t\t\t\t<IsOn>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t</IsOn>\n\t\t\t\t\t\t\t\t\t\t<Slot>\n\t\t\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t\t\t</Slot>\n\t\t\t\t\t\t\t\t\t</SubOsc>\n\t\t\t\t\t\t\t\t\t<InterpolationMode Value=\"3\" />\n\t\t\t\t\t\t\t\t\t<UseConstPowCrossfade Value=\"true\" />\n\t\t\t\t\t\t\t\t</Player>\n\t\t\t\t\t\t\t\t<Pitch>\n\t\t\t\t\t\t\t\t\t<TransposeKey>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-48\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"48\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</TransposeKey>\n\t\t\t\t\t\t\t\t\t<TransposeFine>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-50\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"50\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</TransposeFine>\n\t\t\t\t\t\t\t\t\t<PitchLfoAmount>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</PitchLfoAmount>\n\t\t\t\t\t\t\t\t\t<Envelope>\n\t\t\t\t\t\t\t\t\t\t<IsOn>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t</IsOn>\n\t\t\t\t\t\t\t\t\t\t<Slot>\n\t\t\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t\t\t</Slot>\n\t\t\t\t\t\t\t\t\t</Envelope>\n\t\t\t\t\t\t\t\t\t<ScrollPosition Value=\"-1073741824\" />\n\t\t\t\t\t\t\t\t</Pitch>\n\t\t\t\t\t\t\t\t<Filter>\n\t\t\t\t\t\t\t\t\t<IsOn>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t</IsOn>\n\t\t\t\t\t\t\t\t\t<Slot>\n\t\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t\t</Slot>\n\t\t\t\t\t\t\t\t</Filter>\n\t\t\t\t\t\t\t\t<Shaper>\n\t\t\t\t\t\t\t\t\t<IsOn>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t</IsOn>\n\t\t\t\t\t\t\t\t\t<Slot>\n\t\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t\t</Slot>\n\t\t\t\t\t\t\t\t</Shaper>\n\t\t\t\t\t\t\t\t<VolumeAndPan>\n\t\t\t\t\t\t\t\t\t<Volume>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"-12\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-36\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"36\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</Volume>\n\t\t\t\t\t\t\t\t\t<VolumeVelScale>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0.4499999881\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</VolumeVelScale>\n\t\t\t\t\t\t\t\t\t<VolumeKeyScale>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-1\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</VolumeKeyScale>\n\t\t\t\t\t\t\t\t\t<VolumeLfoAmount>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</VolumeLfoAmount>\n\t\t\t\t\t\t\t\t\t<Panorama>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-1\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</Panorama>\n\t\t\t\t\t\t\t\t\t<PanoramaKeyScale>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-1\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</PanoramaKeyScale>\n\t\t\t\t\t\t\t\t\t<PanoramaRnd>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</PanoramaRnd>\n\t\t\t\t\t\t\t\t\t<PanoramaLfoAmount>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</PanoramaLfoAmount>\n\t\t\t\t\t\t\t\t\t<Envelope>\n\t\t\t\t\t\t\t\t\t\t<AttackTime>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0.1000000015\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0.1000000015\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"20000\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</AttackTime>\n\t\t\t\t\t\t\t\t\t\t<AttackLevel>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0.0003162277571\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0.0003162277571\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</AttackLevel>\n\t\t\t\t\t\t\t\t\t\t<AttackSlope>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</AttackSlope>\n\t\t\t\t\t\t\t\t\t\t<DecayTime>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"300\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"60000\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</DecayTime>\n\t\t\t\t\t\t\t\t\t\t<DecayLevel>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0.0003162277571\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</DecayLevel>\n\t\t\t\t\t\t\t\t\t\t<DecaySlope>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</DecaySlope>\n\t\t\t\t\t\t\t\t\t\t<SustainLevel>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0.0003162277571\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</SustainLevel>\n\t\t\t\t\t\t\t\t\t\t<ReleaseTime>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"60000\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"60000\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</ReleaseTime>\n\t\t\t\t\t\t\t\t\t\t<ReleaseLevel>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0.0003162277571\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0.0003162277571\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</ReleaseLevel>\n\t\t\t\t\t\t\t\t\t\t<ReleaseSlope>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-1\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</ReleaseSlope>\n\t\t\t\t\t\t\t\t\t\t<LoopMode>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"4\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t</LoopMode>\n\t\t\t\t\t\t\t\t\t\t<LoopTime>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"100\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0.200000003\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"20000\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</LoopTime>\n\t\t\t\t\t\t\t\t\t\t<RepeatTime>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"3\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"14\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</RepeatTime>\n\t\t\t\t\t\t\t\t\t\t<TimeVelScale>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-100\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"100\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</TimeVelScale>\n\t\t\t\t\t\t\t\t\t\t<CurrentOverlay Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</Envelope>\n\t\t\t\t\t\t\t\t\t<OneShotEnvelope>\n\t\t\t\t\t\t\t\t\t\t<FadeInTime>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"2000\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</FadeInTime>\n\t\t\t\t\t\t\t\t\t\t<SustainMode>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t</SustainMode>\n\t\t\t\t\t\t\t\t\t\t<FadeOutTime>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0.1000000015\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"2000\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</FadeOutTime>\n\t\t\t\t\t\t\t\t\t</OneShotEnvelope>\n\t\t\t\t\t\t\t\t</VolumeAndPan>\n\t\t\t\t\t\t\t\t<AuxEnv>\n\t\t\t\t\t\t\t\t\t<IsOn>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t</IsOn>\n\t\t\t\t\t\t\t\t\t<Slot>\n\t\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t\t</Slot>\n\t\t\t\t\t\t\t\t</AuxEnv>\n\t\t\t\t\t\t\t\t<Lfo>\n\t\t\t\t\t\t\t\t\t<IsOn>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t</IsOn>\n\t\t\t\t\t\t\t\t\t<Slot>\n\t\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t\t</Slot>\n\t\t\t\t\t\t\t\t</Lfo>\n\t\t\t\t\t\t\t\t<AuxLfos.0>\n\t\t\t\t\t\t\t\t\t<IsOn>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t</IsOn>\n\t\t\t\t\t\t\t\t\t<Slot>\n\t\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t\t</Slot>\n\t\t\t\t\t\t\t\t</AuxLfos.0>\n\t\t\t\t\t\t\t\t<AuxLfos.1>\n\t\t\t\t\t\t\t\t\t<IsOn>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"false\" />\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t</IsOn>\n\t\t\t\t\t\t\t\t\t<Slot>\n\t\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t\t</Slot>\n\t\t\t\t\t\t\t\t</AuxLfos.1>\n\t\t\t\t\t\t\t\t<KeyDst>\n\t\t\t\t\t\t\t\t\t<ModConnections.0>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.0>\n\t\t\t\t\t\t\t\t\t<ModConnections.1>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.1>\n\t\t\t\t\t\t\t\t</KeyDst>\n\t\t\t\t\t\t\t\t<VelDst>\n\t\t\t\t\t\t\t\t\t<ModConnections.0>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.0>\n\t\t\t\t\t\t\t\t\t<ModConnections.1>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.1>\n\t\t\t\t\t\t\t\t</VelDst>\n\t\t\t\t\t\t\t\t<RelVelDst>\n\t\t\t\t\t\t\t\t\t<ModConnections.0>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.0>\n\t\t\t\t\t\t\t\t\t<ModConnections.1>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.1>\n\t\t\t\t\t\t\t\t</RelVelDst>\n\t\t\t\t\t\t\t\t<MidiCtrl.0>\n\t\t\t\t\t\t\t\t\t<ModConnections.0>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.0>\n\t\t\t\t\t\t\t\t\t<ModConnections.1>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.1>\n\t\t\t\t\t\t\t\t\t<Feedback Value=\"0\" />\n\t\t\t\t\t\t\t\t</MidiCtrl.0>\n\t\t\t\t\t\t\t\t<MidiCtrl.1>\n\t\t\t\t\t\t\t\t\t<ModConnections.0>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.0>\n\t\t\t\t\t\t\t\t\t<ModConnections.1>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.1>\n\t\t\t\t\t\t\t\t\t<Feedback Value=\"0\" />\n\t\t\t\t\t\t\t\t</MidiCtrl.1>\n\t\t\t\t\t\t\t\t<MidiCtrl.2>\n\t\t\t\t\t\t\t\t\t<ModConnections.0>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.0>\n\t\t\t\t\t\t\t\t\t<ModConnections.1>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.1>\n\t\t\t\t\t\t\t\t\t<Feedback Value=\"0\" />\n\t\t\t\t\t\t\t\t</MidiCtrl.2>\n\t\t\t\t\t\t\t\t<MidiCtrl.3>\n\t\t\t\t\t\t\t\t\t<ModConnections.0>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.0>\n\t\t\t\t\t\t\t\t\t<ModConnections.1>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.1>\n\t\t\t\t\t\t\t\t\t<Feedback Value=\"0\" />\n\t\t\t\t\t\t\t\t</MidiCtrl.3>\n\t\t\t\t\t\t\t\t<MidiCtrl.4>\n\t\t\t\t\t\t\t\t\t<ModConnections.0>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.0>\n\t\t\t\t\t\t\t\t\t<ModConnections.1>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.1>\n\t\t\t\t\t\t\t\t\t<Feedback Value=\"0\" />\n\t\t\t\t\t\t\t\t</MidiCtrl.4>\n\t\t\t\t\t\t\t\t<MidiCtrl.5>\n\t\t\t\t\t\t\t\t\t<ModConnections.0>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.0>\n\t\t\t\t\t\t\t\t\t<ModConnections.1>\n\t\t\t\t\t\t\t\t\t\t<Amount Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Connection Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModConnections.1>\n\t\t\t\t\t\t\t\t\t<Feedback Value=\"0\" />\n\t\t\t\t\t\t\t\t</MidiCtrl.5>\n\t\t\t\t\t\t\t\t<Globals>\n\t\t\t\t\t\t\t\t\t<NumVoices Value=\"2\" />\n\t\t\t\t\t\t\t\t\t<NumVoicesEnvTimeControl Value=\"false\" />\n\t\t\t\t\t\t\t\t\t<RetriggerMode Value=\"true\" />\n\t\t\t\t\t\t\t\t\t<ModulationResolution Value=\"2\" />\n\t\t\t\t\t\t\t\t\t<SpreadAmount>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"100\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</SpreadAmount>\n\t\t\t\t\t\t\t\t\t<KeyZoneShift>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-48\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"48\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</KeyZoneShift>\n\t\t\t\t\t\t\t\t\t<PortamentoMode>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"2\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t</PortamentoMode>\n\t\t\t\t\t\t\t\t\t<PortamentoTime>\n\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t<Manual Value=\"50\" />\n\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"0.1000000015\" />\n\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"10000\" />\n\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t</PortamentoTime>\n\t\t\t\t\t\t\t\t\t<PitchBendRange Value=\"5\" />\n\t\t\t\t\t\t\t\t\t<MpePitchBendRange Value=\"48\" />\n\t\t\t\t\t\t\t\t\t<ScrollPosition Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<EnvScale>\n\t\t\t\t\t\t\t\t\t\t<EnvTime>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-100\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"100\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</EnvTime>\n\t\t\t\t\t\t\t\t\t\t<EnvTimeKeyScale>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"-100\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"100\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t\t\t</EnvTimeKeyScale>\n\t\t\t\t\t\t\t\t\t\t<EnvTimeIncludeAttack>\n\t\t\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<Manual Value=\"true\" />\n\t\t\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t</EnvTimeIncludeAttack>\n\t\t\t\t\t\t\t\t\t</EnvScale>\n\t\t\t\t\t\t\t\t\t<IsSimpler Value=\"true\" />\n\t\t\t\t\t\t\t\t\t<PlaybackMode Value=\"1\" />\n\t\t\t\t\t\t\t\t\t<LegacyMode Value=\"false\" />\n\t\t\t\t\t\t\t\t</Globals>\n\t\t\t\t\t\t\t\t<ViewSettings>\n\t\t\t\t\t\t\t\t\t<SelectedPage Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<ZoneEditorVisible Value=\"false\" />\n\t\t\t\t\t\t\t\t\t<Seconds Value=\"false\" />\n\t\t\t\t\t\t\t\t\t<SelectedSampleChannel Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<VerticalSampleZoom Value=\"1\" />\n\t\t\t\t\t\t\t\t\t<IsAutoSelectEnabled Value=\"false\" />\n\t\t\t\t\t\t\t\t\t<SimplerBreakoutVisible Value=\"false\" />\n\t\t\t\t\t\t\t\t</ViewSettings>\n\t\t\t\t\t\t\t\t<SimplerSlicing>\n\t\t\t\t\t\t\t\t\t<PlaybackMode Value=\"0\" />\n\t\t\t\t\t\t\t\t</SimplerSlicing>\n\t\t\t\t\t\t\t</OriginalSimpler>\n\t\t\t\t\t\t</Device>\n\t\t\t\t\t\t<PresetRef>\n\t\t\t\t\t\t\t<AbletonDefaultPresetRef Id=\"0\">\n\t\t\t\t\t\t\t\t<FileRef>\n\t\t\t\t\t\t\t\t\t<RelativePathType Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<RelativePath Value=\"\" />\n\t\t\t\t\t\t\t\t\t<Path Value=\"\" />\n\t\t\t\t\t\t\t\t\t<Type Value=\"2\" />\n\t\t\t\t\t\t\t\t\t<LivePackName Value=\"\" />\n\t\t\t\t\t\t\t\t\t<LivePackId Value=\"\" />\n\t\t\t\t\t\t\t\t\t<OriginalFileSize Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<OriginalCrc Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<SourceHint Value=\"\" />\n\t\t\t\t\t\t\t\t</FileRef>\n\t\t\t\t\t\t\t\t<DeviceId Name=\"OriginalSimpler\" />\n\t\t\t\t\t\t\t</AbletonDefaultPresetRef>\n\t\t\t\t\t\t</PresetRef>\n\t\t\t\t\t</AbletonDevicePreset>\n\t\t\t\t</DevicePresets>\n\t\t\t\t<MixerPreset>\n\t\t\t\t\t<AbletonDevicePreset Id=\"0\">\n\t\t\t\t\t\t<OverwriteProtectionNumber Value=\"3075\" />\n\t\t\t\t\t\t<Device>\n\t\t\t\t\t\t\t<AudioBranchMixerDevice Id=\"0\">\n\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t<LomIdView Value=\"0\" />\n\t\t\t\t\t\t\t\t<IsExpanded Value=\"true\" />\n\t\t\t\t\t\t\t\t<BreakoutIsExpanded Value=\"false\" />\n\t\t\t\t\t\t\t\t<On>\n\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<Manual Value=\"true\" />\n\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t</On>\n\t\t\t\t\t\t\t\t<ModulationSourceCount Value=\"0\" />\n\t\t\t\t\t\t\t\t<ParametersListWrapper LomId=\"0\" />\n\t\t\t\t\t\t\t\t<Pointee Id=\"0\" />\n\t\t\t\t\t\t\t\t<LastSelectedTimeableIndex Value=\"0\" />\n\t\t\t\t\t\t\t\t<LastSelectedClipEnvelopeIndex Value=\"0\" />\n\t\t\t\t\t\t\t\t<LastPresetRef>\n\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t</LastPresetRef>\n\t\t\t\t\t\t\t\t<LockedScripts />\n\t\t\t\t\t\t\t\t<IsFolded Value=\"false\" />\n\t\t\t\t\t\t\t\t<ShouldShowPresetName Value=\"true\" />\n\t\t\t\t\t\t\t\t<UserName Value=\"\" />\n\t\t\t\t\t\t\t\t<Annotation Value=\"\" />\n\t\t\t\t\t\t\t\t<SourceContext>\n\t\t\t\t\t\t\t\t\t<Value />\n\t\t\t\t\t\t\t\t</SourceContext>\n\t\t\t\t\t\t\t\t<MpePitchBendUsesTuning Value=\"true\" />\n\t\t\t\t\t\t\t\t<ViewData Value=\"{}\" />\n\t\t\t\t\t\t\t\t<OverwriteProtectionNumber Value=\"3075\" />\n\t\t\t\t\t\t\t\t<Speaker>\n\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<Manual Value=\"true\" />\n\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t<MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t\t\t<Min Value=\"64\" />\n\t\t\t\t\t\t\t\t\t\t<Max Value=\"127\" />\n\t\t\t\t\t\t\t\t\t</MidiCCOnOffThresholds>\n\t\t\t\t\t\t\t\t</Speaker>\n\t\t\t\t\t\t\t\t<Volume>\n\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<Manual Value=\"1\" />\n\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<Min Value=\"0.0003162277571\" />\n\t\t\t\t\t\t\t\t\t\t<Max Value=\"1.99526238\" />\n\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t</Volume>\n\t\t\t\t\t\t\t\t<Panorama>\n\t\t\t\t\t\t\t\t\t<LomId Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<Manual Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<MidiControllerRange>\n\t\t\t\t\t\t\t\t\t\t<Min Value=\"-1\" />\n\t\t\t\t\t\t\t\t\t\t<Max Value=\"1\" />\n\t\t\t\t\t\t\t\t\t</MidiControllerRange>\n\t\t\t\t\t\t\t\t\t<AutomationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</AutomationTarget>\n\t\t\t\t\t\t\t\t\t<ModulationTarget Id=\"0\">\n\t\t\t\t\t\t\t\t\t\t<LockEnvelope Value=\"0\" />\n\t\t\t\t\t\t\t\t\t</ModulationTarget>\n\t\t\t\t\t\t\t\t</Panorama>\n\t\t\t\t\t\t\t\t<SendInfos />\n\t\t\t\t\t\t\t\t<RoutingHelper>\n\t\t\t\t\t\t\t\t\t<Routable>\n\t\t\t\t\t\t\t\t\t\t<Target Value=\"AudioOut/None\" />\n\t\t\t\t\t\t\t\t\t\t<UpperDisplayString Value=\"No Output\" />\n\t\t\t\t\t\t\t\t\t\t<LowerDisplayString Value=\"\" />\n\t\t\t\t\t\t\t\t\t\t<MpeSettings>\n\t\t\t\t\t\t\t\t\t\t\t<ZoneType Value=\"0\" />\n\t\t\t\t\t\t\t\t\t\t\t<FirstNoteChannel Value=\"1\" />\n\t\t\t\t\t\t\t\t\t\t\t<LastNoteChannel Value=\"15\" />\n\t\t\t\t\t\t\t\t\t\t</MpeSettings>\n\t\t\t\t\t\t\t\t\t\t<MpePitchBendUsesTuning Value=\"true\" />\n\t\t\t\t\t\t\t\t\t</Routable>\n\t\t\t\t\t\t\t\t\t<TargetEnum Value=\"0\" />\n\t\t\t\t\t\t\t\t</RoutingHelper>\n\t\t\t\t\t\t\t\t<SendsListWrapper LomId=\"0\" />\n\t\t\t\t\t\t\t</AudioBranchMixerDevice>\n\t\t\t\t\t\t</Device>\n\t\t\t\t\t\t<PresetRef>\n\t\t\t\t\t\t\t<AbletonDefaultPresetRef Id=\"0\">\n\t\t\t\t\t\t\t\t<FileRef>\n\t\t\t\t\t\t\t\t\t<RelativePathType Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<RelativePath Value=\"\" />\n\t\t\t\t\t\t\t\t\t<Path Value=\"\" />\n\t\t\t\t\t\t\t\t\t<Type Value=\"2\" />\n\t\t\t\t\t\t\t\t\t<LivePackName Value=\"\" />\n\t\t\t\t\t\t\t\t\t<LivePackId Value=\"\" />\n\t\t\t\t\t\t\t\t\t<OriginalFileSize Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<OriginalCrc Value=\"0\" />\n\t\t\t\t\t\t\t\t\t<SourceHint Value=\"\" />\n\t\t\t\t\t\t\t\t</FileRef>\n\t\t\t\t\t\t\t\t<DeviceId Name=\"AudioBranchMixerDevice\" />\n\t\t\t\t\t\t\t</AbletonDefaultPresetRef>\n\t\t\t\t\t\t</PresetRef>\n\t\t\t\t\t</AbletonDevicePreset>\n\t\t\t\t</MixerPreset>\n\t\t\t\t<BranchSelectorRange>\n\t\t\t\t\t<Min Value=\"0\" />\n\t\t\t\t\t<Max Value=\"0\" />\n\t\t\t\t\t<CrossfadeMin Value=\"0\" />\n\t\t\t\t\t<CrossfadeMax Value=\"0\" />\n\t\t\t\t</BranchSelectorRange>\n\t\t\t\t<SessionViewBranchWidth Value=\"55\" />\n\t\t\t\t<DocumentColorIndex Value=\"1\" />\n\t\t\t\t<AutoColored Value=\"true\" />\n\t\t\t\t<AutoColorScheme Value=\"0\" />\n\t\t\t\t<SourceContext />\n\t\t\t\t<ZoneSettings>\n\t\t\t\t\t<ReceivingNote Value=\"<%= PadNote %>\" />\n\t\t\t\t\t<SendingNote Value=\"60\" />\n\t\t\t\t\t<ChokeGroup Value=\"<%= ChokeGroup %>\" />\n\t\t\t\t</ZoneSettings>\n\t\t\t</DrumBranchPreset>",
+  };
+})(typeof window!=="undefined"?window:globalThis);
+
+</script>
+<script>
+// MPC <-> Ableton Drum Rack — konwersja po stronie przeglądarki.
+// Czysta logika (bez DOM) jest też testowalna w Node 22.
+(function (G) {
+  "use strict";
+  const TEMPLATES = G.TEMPLATES;
+
+  // ----------------------------------------------------------------- utils
+  const NOTE_OFFSET = 35;          // pad MPC N <-> nuta 35+N (pad 1 = C1 = 36)
+  const MAX_PADS = 128;
+  const MPC_DEFAULT_VOLUME = 0.707946;
+  const MPC_DEFAULT_PAN = 0.5;
+
+  function xmlEscape(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function f6(x) { return Number(x).toFixed(6); }
+  function baseNoExt(name) {
+    const b = String(name).split(/[\\/]/).pop();
+    const i = b.lastIndexOf(".");
+    return i > 0 ? b.slice(0, i) : b;
+  }
+
+  // głośność Simplera (dB) -> głośność instrumentu MPC: dB = 40*log10(v)+6
+  function dbToMpcVolume(db) {
+    const v = Math.pow(10, (db - 6) / 40);
+    return Math.min(Math.max(v, 0), 1);
+  }
+  // odwrotnie (przy forward): MPC volume (0..1) -> dB Simplera
+  function mpcVolumeToDb(v) {
+    if (v <= 0) return -60;
+    return 40 * Math.log10(v) + 6;
+  }
+
+  // ----------------------------------------------------------------- gzip
+  async function gunzip(u8) {
+    const ds = new DecompressionStream("gzip");
+    const stream = new Blob([u8]).stream().pipeThrough(ds);
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  async function gzip(u8) {
+    const cs = new CompressionStream("gzip");
+    const stream = new Blob([u8]).stream().pipeThrough(cs);
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  // ----------------------------------------------------------------- WAV
+  function wavFrames(buf) {
+    try {
+      const dv = new DataView(buf);
+      if (dv.byteLength < 12) return 0;
+      if (dv.getUint32(0, false) !== 0x52494646) return 0;     // 'RIFF'
+      if (dv.getUint32(8, false) !== 0x57415645) return 0;     // 'WAVE'
+      let off = 12, blockAlign = 0;
+      while (off + 8 <= dv.byteLength) {
+        const id = dv.getUint32(off, false);
+        const size = dv.getUint32(off + 4, true);
+        if (id === 0x666d7420) {                               // 'fmt '
+          if (off + 8 + 14 <= dv.byteLength)
+            blockAlign = dv.getUint16(off + 8 + 12, true);
+        } else if (id === 0x64617461) {                        // 'data'
+          if (blockAlign) return Math.floor(size / blockAlign);
+          return 0;
+        }
+        off += 8 + size + (size & 1);
+      }
+    } catch (e) { /* ignore */ }
+    return 0;
+  }
+
+  // ----------------------------------------------------------------- ZIP (store)
+  const CRC_TABLE = (function () {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(u8) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  // files: [{name, data: Uint8Array}] -> Uint8Array (zip, metoda 0 = store)
+  function makeZip(files) {
+    const enc = new TextEncoder();
+    const chunks = [];
+    const central = [];
+    let offset = 0;
+    const DOS_TIME = 0, DOS_DATE = 0x21; // 1980-01-01
+    for (const f of files) {
+      const nameBytes = enc.encode(f.name);
+      const crc = crc32(f.data);
+      const size = f.data.length;
+      const lh = new Uint8Array(30 + nameBytes.length);
+      const dv = new DataView(lh.buffer);
+      dv.setUint32(0, 0x04034b50, true);
+      dv.setUint16(4, 20, true);            // version needed
+      dv.setUint16(6, 0x0800, true);        // flags: UTF-8 names
+      dv.setUint16(8, 0, true);             // method 0 = store
+      dv.setUint16(10, DOS_TIME, true);
+      dv.setUint16(12, DOS_DATE, true);
+      dv.setUint32(14, crc, true);
+      dv.setUint32(18, size, true);
+      dv.setUint32(22, size, true);
+      dv.setUint16(26, nameBytes.length, true);
+      dv.setUint16(28, 0, true);
+      lh.set(nameBytes, 30);
+      chunks.push(lh, f.data);
+      central.push({ nameBytes, crc, size, offset });
+      offset += lh.length + size;
+    }
+    const cdChunks = [];
+    let cdSize = 0;
+    for (const c of central) {
+      const ch = new Uint8Array(46 + c.nameBytes.length);
+      const dv = new DataView(ch.buffer);
+      dv.setUint32(0, 0x02014b50, true);
+      dv.setUint16(4, 20, true);
+      dv.setUint16(6, 20, true);
+      dv.setUint16(8, 0x0800, true);
+      dv.setUint16(10, 0, true);
+      dv.setUint16(12, DOS_TIME, true);
+      dv.setUint16(14, DOS_DATE, true);
+      dv.setUint32(16, c.crc, true);
+      dv.setUint32(20, c.size, true);
+      dv.setUint32(24, c.size, true);
+      dv.setUint16(28, c.nameBytes.length, true);
+      dv.setUint32(42, c.offset, true);
+      ch.set(c.nameBytes, 46);
+      cdChunks.push(ch);
+      cdSize += ch.length;
+    }
+    const end = new Uint8Array(22);
+    const edv = new DataView(end.buffer);
+    edv.setUint32(0, 0x06054b50, true);
+    edv.setUint16(8, central.length, true);
+    edv.setUint16(10, central.length, true);
+    edv.setUint32(12, cdSize, true);
+    edv.setUint32(16, offset, true);
+    const all = [...chunks, ...cdChunks, end];
+    let total = 0; for (const a of all) total += a.length;
+    const out = new Uint8Array(total);
+    let p = 0; for (const a of all) { out.set(a, p); p += a.length; }
+    return out;
+  }
+
+  // ------------------------------------------------------ regex parse helpers
+  function firstAttr(scope, tag) {
+    const m = scope.match(new RegExp("<" + tag + "(?:\\s[^>]*)?\\sValue=\"([^\"]*)\""));
+    return m ? m[1] : null;
+  }
+  function firstText(scope, tag) {
+    const m = scope.match(new RegExp("<" + tag + ">([\\s\\S]*?)</" + tag + ">"));
+    return m ? m[1] : null;
+  }
+  function section(scope, tag) {
+    const m = scope.match(new RegExp("<" + tag + ">([\\s\\S]*?)</" + tag + ">"));
+    return m ? m[1] : null;
+  }
+  function xmlUnescape(s) {
+    return String(s).replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+  }
+
+  // =================================================== REVERSE: .adg -> .xpm
+  function parseAdg(xmlText, fallbackName) {
+    const psMatch = xmlText.match(/<PadScrollPosition Value="(\d+)"/);
+    const psp = psMatch ? parseInt(psMatch[1], 10) : 0;
+
+    const branches = xmlText.match(/<DrumBranchPreset Id="\d+">[\s\S]*?<\/DrumBranchPreset>/g) || [];
+    const raw = [];
+    for (const br of branches) {
+      const idM = br.match(/<DrumBranchPreset Id="(\d+)">/);
+      const bid = idM ? parseInt(idM[1], 10) : 0;
+      const zone = section(br, "ZoneSettings") || "";
+      const recv = parseInt(firstAttr(zone, "ReceivingNote") || "0", 10);
+      const choke = parseInt(firstAttr(zone, "ChokeGroup") || "0", 10);
+
+      const partM = br.match(/<MultiSamplePart\b[^>]*>([\s\S]*?)<\/MultiSamplePart>/);
+      if (!partM) continue;
+      const part = partM[1];
+      let name = firstAttr(part, "Name") || "";
+      name = xmlUnescape(name).trim();
+      const fileRef = section(part, "FileRef") || part;
+      let rel = ""; let abs = "";
+      const relM = fileRef.match(/<RelativePath Value="([^"]*)"/);
+      const absM = fileRef.match(/<Path Value="([^"]*)"/);
+      rel = relM ? xmlUnescape(relM[1]) : "";
+      abs = absM ? xmlUnescape(absM[1]) : "";
+      if (!name && rel) name = baseNoExt(rel);
+      if (!name && !rel && !abs) continue;
+
+      const sampleStart = Math.round(parseFloat(firstAttr(part, "SampleStart") || "0"));
+      const sampleEnd = Math.round(parseFloat(firstAttr(part, "SampleEnd") || "0"));
+
+      // Simpler VolumeAndPan -> głośność (dB) + pan
+      const vp = section(br, "VolumeAndPan") || "";
+      const volSec = section(vp, "Volume") || "";
+      const panSec = section(vp, "Panorama") || "";
+      const volumeDb = parseFloat(firstAttr(volSec, "Manual") || "-12");
+      const pan = parseFloat(firstAttr(panSec, "Manual") || "0");
+
+      raw.push({ bid, recv, name, rel, abs, choke, sampleStart, sampleEnd, volumeDb, pan });
+    }
+    if (!raw.length) throw new Error("Brak padów z samplami w .adg");
+
+    // detekcja plików z forward-toola: recv ściśle malejące od 92 (odporne na luki)
+    const byId = [...raw].sort((a, b) => a.bid - b.bid);
+    const recvs = byId.map(r => r.recv);
+    let isTool = recvs.length >= 2 && recvs[0] === 92;
+    for (let i = 0; isTool && i < recvs.length - 1; i++)
+      if (!(recvs[i] > recvs[i + 1])) isTool = false;
+
+    const pads = raw.map(r => ({
+      midi: isTool ? (128 - r.recv) : r.recv,
+      sampleName: r.name, relPath: r.rel, absPath: r.abs, choke: r.choke,
+      sampleStart: r.sampleStart, sampleEnd: r.sampleEnd,
+      volumeDb: r.volumeDb, pan: r.pan,
+    }));
+    pads.sort((a, b) => a.midi - b.midi);
+    return { programName: fallbackName, pads, isTool };
+  }
+
+  function defaultMapping(pads, compact) {
+    let shift = 0;
+    if (compact && pads.length) shift = Math.min(...pads.map(p => p.midi)) - 36;
+    const map = new Map();
+    pads.forEach((p, idx) => {
+      const padNo = (p.midi - shift) - NOTE_OFFSET;
+      if (padNo >= 1 && padNo <= MAX_PADS) map.set(padNo, idx);
+    });
+    return map;
+  }
+
+  const EMPTY_ASSIGN = {
+    sampleName: "", muteGroup: 0, volume: MPC_DEFAULT_VOLUME, pan: MPC_DEFAULT_PAN,
+    sampleStart: 0, sampleEnd: 0, sliceStart: 0, sliceEnd: 0, xfade: 0,
+  };
+
+  function renderInstrument(number, a) {
+    let out = TEMPLATES.mpc3_instrument;
+    out = out.replace("__INST_NUMBER__", String(number));
+    out = out.replace("__MUTE_GROUP__", String(a.muteGroup));
+    out = out.replace("__SAMPLE_NAME__", xmlEscape(a.sampleName));
+    out = out.replace("__INST_VOLUME__", f6(a.volume));
+    out = out.replace("__INST_PAN__", f6(a.pan));
+    out = out.replace("__L_SAMPLE_START__", String(a.sampleStart));
+    out = out.replace("__L_SAMPLE_END__", String(a.sampleEnd));
+    out = out.replace("__L_SLICE_START__", String(a.sliceStart));
+    out = out.replace("__SLICE_END__", String(a.sliceEnd));
+    out = out.replace("__L_XFADE__", String(a.xfade));
+    return out;
+  }
+
+  function buildXpm(programName, assignments) {
+    let head = TEMPLATES.mpc3_head.replace("__PROGRAM_NAME__", xmlEscape(programName));
+    const parts = [head];
+    for (let n = 1; n <= MAX_PADS; n++) {
+      const a = assignments.get(n) || EMPTY_ASSIGN;
+      parts.push(renderInstrument(n, a));
+    }
+    parts.push(TEMPLATES.mpc3_tail);
+    return parts.join("");
+  }
+
+  // sampleFiles: Map(lowerBaseNoExt -> {name, bytes:Uint8Array})
+  function resolveSample(pad, sampleFiles) {
+    const tryKeys = [];
+    if (pad.relPath) tryKeys.push(baseNoExt(pad.relPath).toLowerCase());
+    if (pad.sampleName) tryKeys.push(pad.sampleName.toLowerCase());
+    for (const k of tryKeys) if (sampleFiles.has(k)) return sampleFiles.get(k);
+    return null;
+  }
+
+  // adgBytes: Uint8Array; sampleFiles: Map; opts {compact, programName, mapping?}
+  async function convertReverse(adgBytes, sampleFiles, opts) {
+    opts = opts || {};
+    const xml = new TextDecoder().decode(await gunzip(adgBytes));
+    const programName = opts.programName || "Kit";
+    const parsed = parseAdg(xml, programName);
+    const mapping = opts.mapping || defaultMapping(parsed.pads, !!opts.compact);
+
+    const assignments = new Map();
+    const outFiles = new Map();   // name -> {name, data}
+    const missing = [];
+    for (const [padNo, idx] of mapping) {
+      const pad = parsed.pads[idx];
+      if (!pad) continue;
+      const src = resolveSample(pad, sampleFiles);
+      if (!src) { missing.push(pad.relPath || pad.sampleName || ("MIDI" + pad.midi)); continue; }
+      if (!outFiles.has(src.name)) outFiles.set(src.name, { name: src.name, data: src.bytes });
+      const frames = wavFrames(src.bytes.buffer.slice(src.bytes.byteOffset, src.bytes.byteOffset + src.bytes.byteLength));
+      let start = Math.max(0, pad.sampleStart);
+      let end = pad.sampleEnd > 0 ? pad.sampleEnd : frames;
+      if (frames && end > frames) end = frames;
+      const trimmed = start > 0 || (pad.sampleEnd > 0 && pad.sampleEnd < frames);
+      let sliceStart, sliceEnd, sStart, sEnd;
+      if (trimmed) { sliceStart = start; sliceEnd = Math.max(start, end - 1); sStart = start; sEnd = end; }
+      else { sliceStart = 0; sliceEnd = Math.max(0, frames - 1); sStart = 0; sEnd = 0; }
+      assignments.set(padNo, {
+        sampleName: baseNoExt(src.name), muteGroup: pad.choke,
+        volume: dbToMpcVolume(pad.volumeDb), pan: Math.min(Math.max(0.5 + pad.pan * 0.5, 0), 1),
+        sampleStart: sStart, sampleEnd: sEnd, sliceStart, sliceEnd, xfade: -1,
+      });
+    }
+    if (!assignments.size) throw new Error("Żaden sampel nie został dopasowany. Dodaj pliki WAV.");
+
+    const xpm = buildXpm(programName, assignments);
+    const zipFiles = [{ name: programName + "/" + programName + ".xpm", data: new TextEncoder().encode(xpm) }];
+    for (const f of outFiles.values()) zipFiles.push({ name: programName + "/" + f.name, data: f.data });
+    return {
+      xpmText: xpm, zip: makeZip(zipFiles),
+      placed: assignments.size, missing, pads: parsed.pads, mapping, isTool: parsed.isTool,
+    };
+  }
+
+  // =================================================== FORWARD: .xpm -> .adg
+  function parseXpm(xmlText, fallbackName) {
+    const progName = (firstText(xmlText, "ProgramName") || fallbackName || "Kit").trim();
+    // bierzemy blok Program type="Drum" jeśli jest
+    let prog = xmlText;
+    const pm = xmlText.match(/<Program type="Drum">([\s\S]*?)<\/Program>/);
+    if (pm) prog = pm[1];
+    const instrBlocks = prog.match(/<Instrument number="\d+">[\s\S]*?<\/Instrument>/g) || [];
+    const padMap = new Map();   // instNum -> sampleName
+    const muteMap = new Map();  // instNum -> muteGroup
+    for (const ib of instrBlocks) {
+      const numM = ib.match(/<Instrument number="(\d+)">/);
+      const num = numM ? parseInt(numM[1], 10) : 0;
+      if (num <= 0) continue;
+      // pierwsza niepusta SampleName (warstwa)
+      const names = ib.match(/<SampleName>([^<]*)<\/SampleName>/g) || [];
+      let sample = "";
+      for (const n of names) {
+        const v = n.replace(/<\/?SampleName>/g, "").trim();
+        if (v) { sample = xmlUnescape(v); break; }
+      }
+      if (!sample) continue;
+      padMap.set(num, sample);
+      const mg = ib.match(/<MuteGroup>(\d+)<\/MuteGroup>/);
+      if (mg) muteMap.set(num, parseInt(mg[1], 10));
+    }
+    if (!padMap.size) throw new Error("Brak instrumentów z samplami w .xpm");
+    return { programName: progName, padMap, muteMap };
+  }
+
+  function pathHintXml(relParts) {
+    // relParts = katalogi w ścieżce (zwykle puste w web)
+    return relParts.map((d, i) => '<RelativePathElement Id="' + (i + 8) + '" Dir="' + xmlEscape(d) + '" />').join("\n");
+  }
+  function renderPad(padId, padNote, sampleFileName, fileSize, choke) {
+    let out = TEMPLATES.adg_pad;
+    const stem = baseNoExt(sampleFileName);
+    out = out.replace(/<%- PadNumber %>/g, String(padId));
+    out = out.replace(/<%- SampleNameWithoutWav %>/g, xmlEscape(stem));
+    out = out.replace(/<%- SampleName %>/g, xmlEscape(sampleFileName));
+    out = out.replace(/<%= PadNote %>/g, String(padNote));
+    out = out.replace(/<%= ChokeGroup %>/g, String(choke || 0));
+    out = out.replace(/__SAMPLE_ABS_PATH__/g, xmlEscape(sampleFileName));
+    out = out.replace(/<PathHint>[\s\S]*?<\/PathHint>/, "<PathHint>\n\n</PathHint>");
+    out = out.replace(/<FileSize Value="\d+" \/>/, '<FileSize Value="' + (fileSize || 0) + '" />');
+    out = out.replace(/<Crc Value="\d+" \/>/, '<Crc Value="0" />');
+    out = out.replace(/<HasExtendedInfo Value="true" \/>/, '<HasExtendedInfo Value="false" />');
+    return out;
+  }
+
+  // padPaths: Map(instNum -> {fileName, size}); muteMap; firstNote
+  function buildAdgXml(padPaths, muteMap, firstNote) {
+    const FACTORY = 92;
+    const nums = [...padPaths.keys()].sort((a, b) => a - b);
+    let truncated = 0;
+    const valid = [];
+    for (const n of nums) {
+      const note = firstNote + n - 1;
+      if (note > 127 || note < 0) { truncated++; continue; }
+      valid.push([note, n]);
+    }
+    const firstVisible = valid.length ? valid[0][0] : 36;
+    const padsXml = [];
+    valid.forEach(([targetMidi, instNum], idx) => {
+      const sp = padPaths.get(instNum);
+      const recv = FACTORY - idx;
+      const choke = muteMap.get(instNum) || 0;
+      padsXml.push(renderPad(idx, recv, sp.fileName, sp.size, choke));
+    });
+    const padScroll = Math.max(0, Math.floor(firstVisible / 4));
+    const head = TEMPLATES.adg_head.replace("__PAD_SCROLL_POSITION__", String(padScroll));
+    return { xml: head + "\n" + padsXml.join("\n") + "\n" + TEMPLATES.adg_tail, truncated };
+  }
+
+  function autoFirstNote(maxInst) {
+    const maxFirst = 127 - maxInst + 1;
+    if (maxFirst < 0) return 0;
+    return Math.min(36, maxFirst);
+  }
+
+  // xpmBytes: Uint8Array; sampleFiles: Map; opts {firstNote, programName}
+  async function convertForward(xpmBytes, sampleFiles, opts) {
+    opts = opts || {};
+    const xml = new TextDecoder().decode(xpmBytes);
+    const parsed = parseXpm(xml, opts.programName);
+    const padPaths = new Map();
+    const outFiles = new Map();
+    const missing = [];
+    for (const [instNum, sampleName] of parsed.padMap) {
+      const key = sampleName.toLowerCase();
+      const src = sampleFiles.get(key) || sampleFiles.get(baseNoExt(sampleName).toLowerCase());
+      if (!src) { missing.push(sampleName); continue; }
+      if (!outFiles.has(src.name)) outFiles.set(src.name, { name: src.name, data: src.bytes });
+      padPaths.set(instNum, { fileName: src.name, size: src.bytes.length });
+    }
+    if (!padPaths.size) throw new Error("Żaden sampel nie został dopasowany. Dodaj pliki WAV.");
+    const maxInst = Math.max(...padPaths.keys());
+    const fn = (opts.firstNote != null) ? opts.firstNote : autoFirstNote(maxInst);
+    const { xml: adgXml, truncated } = buildAdgXml(padPaths, parsed.muteMap, fn);
+    const adgGz = await gzip(new TextEncoder().encode(adgXml));
+    const name = parsed.programName;
+    const zipFiles = [{ name: name + "/" + name + ".adg", data: adgGz }];
+    for (const f of outFiles.values()) zipFiles.push({ name: name + "/" + f.name, data: f.data });
+    return {
+      adg: adgGz, zip: makeZip(zipFiles), programName: name,
+      placed: padPaths.size, missing, truncated, firstNote: fn,
+    };
+  }
+
+  // =================================================== PODGLĄD (z audio)
+  function wavInfo(buf) {
+    try {
+      const dv = new DataView(buf);
+      if (dv.byteLength < 12 || dv.getUint32(0, false) !== 0x52494646)
+        return { frames: 0, sampleRate: 44100, channels: 1 };
+      let off = 12, blockAlign = 0, sampleRate = 44100, channels = 1;
+      while (off + 8 <= dv.byteLength) {
+        const id = dv.getUint32(off, false), size = dv.getUint32(off + 4, true);
+        if (id === 0x666d7420) {
+          channels = dv.getUint16(off + 8 + 2, true);
+          sampleRate = dv.getUint32(off + 8 + 4, true);
+          blockAlign = dv.getUint16(off + 8 + 12, true);
+        } else if (id === 0x64617461) {
+          return { frames: blockAlign ? Math.floor(size / blockAlign) : 0, sampleRate, channels };
+        }
+        off += 8 + size + (size & 1);
+      }
+    } catch (e) { /* ignore */ }
+    return { frames: 0, sampleRate: 44100, channels: 1 };
+  }
+  function _bufOf(u8) { return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength); }
+
+  async function previewReverse(adgBytes, sampleFiles, opts) {
+    opts = opts || {};
+    const xml = new TextDecoder().decode(await gunzip(adgBytes));
+    const parsed = parseAdg(xml, opts.programName || "Kit");
+    const mapping = opts.mapping || defaultMapping(parsed.pads, !!opts.compact);
+    const pads = new Map(); const missing = [];
+    for (const [padNo, idx] of mapping) {
+      const pad = parsed.pads[idx]; if (!pad) continue;
+      const src = resolveSample(pad, sampleFiles);
+      if (!src) {
+        missing.push(pad.relPath || pad.sampleName);
+        pads.set(padNo, { sampleName: pad.sampleName || "?", srcNote: pad.midi, choke: pad.choke, missing: true });
+        continue;
+      }
+      const info = wavInfo(_bufOf(src.bytes));
+      let start = Math.max(0, pad.sampleStart);
+      let end = pad.sampleEnd > 0 ? pad.sampleEnd : info.frames;
+      if (info.frames && end > info.frames) end = info.frames;
+      pads.set(padNo, {
+        sampleName: baseNoExt(src.name), fileName: src.name, bytes: src.bytes,
+        srcNote: pad.midi, choke: pad.choke, volumeDb: pad.volumeDb,
+        volume: dbToMpcVolume(pad.volumeDb), pan: pad.pan,
+        sampleStart: start, sampleEnd: end, sampleRate: info.sampleRate, frames: info.frames,
+      });
+    }
+    return { pads, missing, isTool: parsed.isTool, total: parsed.pads.length };
+  }
+
+  async function previewForward(xpmBytes, sampleFiles, opts) {
+    opts = opts || {};
+    const xml = new TextDecoder().decode(xpmBytes);
+    const parsed = parseXpm(xml, opts.programName);
+    const maxInst = Math.max(...parsed.padMap.keys());
+    const fn = (opts.firstNote != null) ? opts.firstNote : autoFirstNote(maxInst);
+    const pads = new Map(); const missing = [];
+    for (const [instNum, sampleName] of parsed.padMap) {
+      const choke = parsed.muteMap.get(instNum) || 0;
+      const src = sampleFiles.get(sampleName.toLowerCase()) || sampleFiles.get(baseNoExt(sampleName).toLowerCase());
+      const note = fn + instNum - 1;
+      if (!src) { missing.push(sampleName); pads.set(instNum, { sampleName, srcNote: note, choke, missing: true }); continue; }
+      const info = wavInfo(_bufOf(src.bytes));
+      pads.set(instNum, {
+        sampleName: baseNoExt(src.name), fileName: src.name, bytes: src.bytes,
+        srcNote: note, choke, sampleStart: 0, sampleEnd: info.frames,
+        sampleRate: info.sampleRate, frames: info.frames, volume: 1,
+      });
+    }
+    return { pads, missing, firstNote: fn, total: parsed.padMap.size };
+  }
+
+  // ----------------------------------------------------------------- export
+  const API = {
+    gunzip, gzip, wavFrames, wavInfo, makeZip, crc32,
+    parseAdg, defaultMapping, buildXpm, convertReverse, previewReverse,
+    parseXpm, buildAdgXml, convertForward, previewForward,
+    dbToMpcVolume, mpcVolumeToDb, baseNoExt,
+  };
+  G.MPCWEB = API;
+  if (typeof module !== "undefined" && module.exports) module.exports = API;
+})(typeof window !== "undefined" ? window : globalThis);
+
+</script>
+<script>
+const M = window.MPCWEB;
+let mode = 'rev';                 // 'rev' = adg->xpm, 'fwd' = xpm->adg
+let progFile = null;              // File
+let sampleMap = new Map();        // lowerBaseNoExt -> {name, bytes}
+let lastUrl = null;
+
+function $(id){return document.getElementById(id)}
+
+// ---- podgląd + audio ----
+let preview=null, bank=0, audioCtx=null;
+const bufCache=new Map(), chokeNodes={};
+const MPC_LAYOUT=[[13,14,15,16],[9,10,11,12],[5,6,7,8],[1,2,3,4]];
+const MG_COLORS=[null,'#ff6b6b','#7986cb','#66bb6a','#ffa726','#26c6da','#ec407a','#9ccc65','#ab47bc','#ffee58','#42a5f5','#ff7043','#5c6bc0','#90a4ae','#d4e157','#ba68c8','#26a69a'];
+
+async function getBuffer(p){
+  if(bufCache.has(p.fileName)) return bufCache.get(p.fileName);
+  const buf=await audioCtx.decodeAudioData(p.bytes.slice().buffer);
+  bufCache.set(p.fileName, buf); return buf;
+}
+async function playPad(p, cell){
+  if(!p || p.missing || !p.bytes) return;
+  try{
+    if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended') await audioCtx.resume();
+    const buf=await getBuffer(p);
+    if(p.choke && chokeNodes[p.choke]){ try{chokeNodes[p.choke].stop()}catch(e){} }
+    const src=audioCtx.createBufferSource(); src.buffer=buf;
+    const g=audioCtx.createGain(); g.gain.value=Math.min(1, p.volume||1);
+    let pan=audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+    if(pan){ pan.pan.value=Math.max(-1,Math.min(1,(p.pan!=null?p.pan:0))); src.connect(g).connect(pan).connect(audioCtx.destination); }
+    else src.connect(g).connect(audioCtx.destination);
+    const sr=p.sampleRate||buf.sampleRate;
+    const offset=(p.sampleStart||0)/sr;
+    const dur=(p.sampleEnd>p.sampleStart)?(p.sampleEnd-p.sampleStart)/sr:undefined;
+    src.start(0, offset, dur);
+    if(p.choke) chokeNodes[p.choke]=src;
+    if(cell){ cell.classList.add('playing'); const ms=Math.min(1200,(dur||0.3)*1000)+60;
+      setTimeout(()=>cell.classList.remove('playing'), ms); }
+  }catch(e){ logLine('Audio: '+e.message,'err'); }
+}
+
+function noteName(n){const N=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];return N[((n%12)+12)%12]+(Math.floor(n/12)-2);}
+
+function renderPreview(){
+  const card=$('previewCard');
+  if(!preview || !preview.pads.size){ card.style.display='none'; return; }
+  card.style.display='block';
+  const total=preview.pads.size;
+  const maxPad=Math.max(...preview.pads.keys());
+  const banksUsed=Math.ceil(maxPad/16);
+  $('pvMeta').textContent='• '+total+' padów'+(preview.isTool?' • kit z forward-toola (1:1)':'')+(preview.missing&&preview.missing.length?' • brak '+preview.missing.length+' sampli':'');
+  // banki
+  const bk=$('pvBanks'); bk.innerHTML='';
+  for(let b=0;b<Math.max(1,banksUsed);b++){
+    const has=[...preview.pads.keys()].some(k=>Math.floor((k-1)/16)===b);
+    const el=document.createElement('div');
+    el.className='bk'+(b===bank?' active':'')+(has?' has':'');
+    el.textContent='Bank '+String.fromCharCode(65+b);
+    el.onclick=()=>{bank=b;renderPreview();};
+    bk.appendChild(el);
+  }
+  // siatka
+  const grid=$('previewGrid'); grid.innerHTML='';
+  for(const row of MPC_LAYOUT) for(const pin of row){
+    const padNo=bank*16+pin;
+    const p=preview.pads.get(padNo);
+    const cell=document.createElement('div');
+    if(!p){ cell.className='pad empty';
+      cell.innerHTML=`<div class="pn"><span>pad ${padNo}</span></div><div class="meta">—</div>`; }
+    else if(p.missing){ cell.className='pad miss';
+      cell.innerHTML=`<div class="pn"><span>pad ${padNo}</span></div><div class="sn">${p.sampleName}</div><div class="meta">brak WAV</div>`; }
+    else {
+      cell.className='pad has';
+      const dot=p.choke?`<span class="dot" style="background:${MG_COLORS[p.choke]||'#888'}"></span>`:'';
+      const trim=(p.sampleStart>0||(p.frames&&p.sampleEnd<p.frames))?' ✂':'';
+      cell.innerHTML=`<div class="pn"><span>pad ${padNo}</span>${dot}</div>`+
+        `<div class="sn">${p.sampleName}</div>`+
+        `<div class="meta">${noteName(p.srcNote)} (${p.srcNote})${p.choke?' • MG'+p.choke:''}${trim}</div>`;
+      cell.onclick=()=>playPad(p, cell);
+    }
+    grid.appendChild(cell);
+  }
+}
+
+let pvTimer=null;
+function schedulePreview(){ clearTimeout(pvTimer); pvTimer=setTimeout(buildPreview, 120); }
+async function buildPreview(){
+  if(!progFile || !sampleMap.size){ preview=null; renderPreview(); return; }
+  try{
+    const bytes=new Uint8Array(await progFile.arrayBuffer());
+    const name=baseNoExt(progFile.name);
+    if(mode==='rev') preview=await M.previewReverse(bytes, sampleMap, {compact:$('compact').checked, programName:name});
+    else preview=await M.previewForward(bytes, sampleMap, {firstNote:($('firstNote').value.trim()===''?null:parseInt($('firstNote').value,10)), programName:name});
+    bank=0; renderPreview();
+  }catch(e){ preview=null; renderPreview(); }
+}
+function logLine(s, cls){ const l=$('log'); l.classList.add('show');
+  l.innerHTML += (cls?`<span class="${cls}">${s}</span>`:s)+'\n'; l.scrollTop=l.scrollHeight; }
+function clearLog(){ $('log').innerHTML=''; $('log').classList.remove('show'); $('dl').classList.remove('show'); }
+
+function setMode(m){
+  mode=m;
+  $('tabRev').classList.toggle('active', m==='rev');
+  $('tabFwd').classList.toggle('active', m==='fwd');
+  $('goBtn').classList.toggle('rev', m==='rev');
+  const rev = m==='rev';
+  $('prgTitle').textContent = rev ? '1. Plik programu (.adg)' : '1. Plik programu (.xpm)';
+  $('dropProgLbl').textContent = rev ? 'Upuść .adg tutaj' : 'Upuść .xpm tutaj';
+  $('prgHint').textContent = rev
+    ? 'Przeciągnij plik drum racka Ableton, albo kliknij by wybrać.'
+    : 'Przeciągnij program MPC (.xpm), albo kliknij by wybrać.';
+  $('optCompact').style.display = rev ? 'flex' : 'none';
+  $('optFirstNote').style.display = rev ? 'none' : 'flex';
+  progFile=null; $('progFiles').innerHTML=''; clearLog();
+  preview=null; renderPreview();
+}
+
+// ---- file collection ----
+const PROG_EXT = ()=> mode==='rev' ? '.adg' : '.xpm';
+function isProg(name){ return name.toLowerCase().endsWith(PROG_EXT()); }
+function isSample(name){ return /\.(wav|aif|aiff|flac|mp3|ogg)$/i.test(name); }
+function baseNoExt(n){ const b=n.split(/[\\/]/).pop(); const i=b.lastIndexOf('.'); return i>0?b.slice(0,i):b; }
+
+async function addSampleFile(file){
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  sampleMap.set(baseNoExt(file.name).toLowerCase(), {name:file.name, bytes});
+}
+function renderProg(){ $('progFiles').innerHTML = progFile ? `<div class="f acc">✓ ${progFile.name}</div>` : ''; }
+function renderSamples(){
+  const n = sampleMap.size;
+  $('sampFiles').innerHTML = n
+    ? `<div class="f ok">✓ ${n} sampli załadowanych</div>` + [...sampleMap.values()].slice(0,6).map(s=>`<div class="f">${s.name}</div>`).join('') + (n>6?`<div class="f">… i ${n-6} więcej</div>`:'')
+    : '';
+}
+
+// ---- drag & drop (pliki + foldery) ----
+function setupDrop(el, onFiles){
+  el.addEventListener('click', ()=>{
+    const inp=document.createElement('input'); inp.type='file'; inp.multiple=true;
+    if(el===$('dropSamp')) inp.webkitdirectory=true;
+    inp.onchange=()=>onFiles([...inp.files]); inp.click();
+  });
+  ['dragover','dragenter'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();el.classList.add('over')}));
+  ['dragleave','drop'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();el.classList.remove('over')}));
+  el.addEventListener('drop', async e=>{
+    const items=e.dataTransfer.items;
+    const files=[];
+    if(items && items.length && items[0].webkitGetAsEntry){
+      const entries=[...items].map(i=>i.webkitGetAsEntry()).filter(Boolean);
+      for(const en of entries) await walkEntry(en, files);
+    } else {
+      files.push(...e.dataTransfer.files);
+    }
+    onFiles(files);
+  });
+}
+function walkEntry(entry, out){
+  return new Promise(res=>{
+    if(entry.isFile){ entry.file(f=>{out.push(f); res();}); }
+    else if(entry.isDirectory){
+      const rd=entry.createReader();
+      rd.readEntries(async ents=>{ for(const e of ents) await walkEntry(e,out); res(); });
+    } else res();
+  });
+}
+
+setupDrop($('dropProg'), async files=>{
+  for(const f of files){ if(isProg(f.name)){ progFile=f; break; } }
+  // jeśli wrzucono też sample obok programu — dorzuć
+  for(const f of files){ if(isSample(f.name)) await addSampleFile(f); }
+  renderProg(); renderSamples(); schedulePreview();
+});
+setupDrop($('dropSamp'), async files=>{
+  for(const f of files){
+    if(isSample(f.name)) await addSampleFile(f);
+    else if(isProg(f.name) && !progFile){ progFile=f; }
+  }
+  renderProg(); renderSamples(); schedulePreview();
+});
+
+// ---- run ----
+async function run(){
+  clearLog();
+  if(!progFile){ logLine('Najpierw dodaj plik '+PROG_EXT(), 'err'); return; }
+  if(!sampleMap.size){ logLine('Dodaj pliki WAV (sample).', 'err'); return; }
+  $('goBtn').disabled=true; logLine('Konwertuję '+progFile.name+' …');
+  try{
+    const bytes = new Uint8Array(await progFile.arrayBuffer());
+    const name = baseNoExt(progFile.name);
+    let res, zipName;
+    if(mode==='rev'){
+      res = await M.convertReverse(bytes, sampleMap, {compact:$('compact').checked, programName:name});
+      logLine('Pady: '+res.placed+(res.isTool?'  (kit z forward-toola → mapowanie 1:1)':''), 'ok');
+    } else {
+      const fnRaw = $('firstNote').value.trim();
+      const firstNote = fnRaw==='' ? null : parseInt(fnRaw,10);
+      res = await M.convertForward(bytes, sampleMap, {firstNote, programName:name});
+      logLine('Pady: '+res.placed+'  | pierwsza nuta MIDI '+res.firstNote, 'ok');
+      if(res.truncated) logLine('Uwaga: '+res.truncated+' padów poza zakresem MIDI 0-127 — pominięte.', 'err');
+    }
+    if(res.missing && res.missing.length){
+      logLine('Brakujące sample ('+res.missing.length+'): '+res.missing.slice(0,8).join(', ')+(res.missing.length>8?' …':''), 'err');
+    }
+    if(lastUrl) URL.revokeObjectURL(lastUrl);
+    const blob = new Blob([res.zip], {type:'application/zip'});
+    lastUrl = URL.createObjectURL(blob);
+    $('dlLink').href = lastUrl;
+    $('dlLink').download = name + (mode==='rev'?'_MPC':'_Ableton') + '.zip';
+    $('dl').classList.add('show');
+    logLine('Gotowe ✓  Pobierz ZIP poniżej (kit: '+(mode==='rev'?'.xpm':'.adg')+' + sample).', 'ok');
+  }catch(err){
+    logLine('BŁĄD: '+err.message, 'err');
+  }finally{
+    $('goBtn').disabled=false;
+  }
+}
+
+$('compact').addEventListener('change', schedulePreview);
+$('firstNote').addEventListener('input', schedulePreview);
+setMode('rev');
+</script>
+</body>
+</html>
