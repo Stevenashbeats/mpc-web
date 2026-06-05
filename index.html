@@ -43,6 +43,25 @@
   .dl.show{display:block}
   .dl a{display:inline-block;padding:13px 22px;background:var(--ok);color:#0c1410;
         border-radius:11px;text-decoration:none;font-weight:600}
+  #pvMeta{color:var(--dim);font-weight:400;font-size:12px}
+  .banks{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .bk{padding:6px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+      cursor:pointer;font-size:13px;color:var(--dim)}
+  .bk.has{color:var(--txt)}
+  .bk.active{border-color:var(--acc2);color:#fff;background:#1b2430}
+  .padgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .pad{aspect-ratio:1/1;border:1px solid var(--line);border-radius:10px;background:var(--panel2);
+       padding:7px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden}
+  .pad.has{cursor:pointer}
+  .pad.has:hover{border-color:var(--acc2)}
+  .pad.has:active{transform:scale(.97)}
+  .pad.playing{box-shadow:0 0 0 2px var(--acc) inset;border-color:var(--acc)}
+  .pad .pn{color:var(--dim);font-size:10px;display:flex;justify-content:space-between;align-items:center}
+  .pad .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .pad .sn{font-weight:600;font-size:12px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pad .meta{color:var(--dim);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pad.miss{border-color:var(--err)} .pad.miss .sn{color:var(--err)}
+  .pad.empty{opacity:.35}
   .ok{color:var(--ok)} .err{color:var(--err)} .acc{color:var(--acc2)}
   footer{color:var(--dim);font-size:12px;text-align:center;margin-top:24px}
   footer a{color:var(--dim)}
@@ -91,6 +110,13 @@
     </div>
   </div>
 
+  <div class="card" id="previewCard" style="display:none">
+    <h3>Podgląd — co wpada na pady <span id="pvMeta"></span></h3>
+    <p class="hint">Klik na pad = odsłuch (z chopem, głośnością i choke). Kolorowa kropka = mute/choke group.</p>
+    <div class="banks" id="pvBanks"></div>
+    <div class="padgrid" id="previewGrid"></div>
+  </div>
+
   <button class="btn rev" id="goBtn" onclick="run()">Konwertuj</button>
 
   <div class="log" id="log"></div>
@@ -112,6 +138,95 @@ let sampleMap = new Map();        // lowerBaseNoExt -> {name, bytes}
 let lastUrl = null;
 
 function $(id){return document.getElementById(id)}
+
+// ---- podgląd + audio ----
+let preview=null, bank=0, audioCtx=null;
+const bufCache=new Map(), chokeNodes={};
+const MPC_LAYOUT=[[13,14,15,16],[9,10,11,12],[5,6,7,8],[1,2,3,4]];
+const MG_COLORS=[null,'#ff6b6b','#7986cb','#66bb6a','#ffa726','#26c6da','#ec407a','#9ccc65','#ab47bc','#ffee58','#42a5f5','#ff7043','#5c6bc0','#90a4ae','#d4e157','#ba68c8','#26a69a'];
+
+async function getBuffer(p){
+  if(bufCache.has(p.fileName)) return bufCache.get(p.fileName);
+  const buf=await audioCtx.decodeAudioData(p.bytes.slice().buffer);
+  bufCache.set(p.fileName, buf); return buf;
+}
+async function playPad(p, cell){
+  if(!p || p.missing || !p.bytes) return;
+  try{
+    if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended') await audioCtx.resume();
+    const buf=await getBuffer(p);
+    if(p.choke && chokeNodes[p.choke]){ try{chokeNodes[p.choke].stop()}catch(e){} }
+    const src=audioCtx.createBufferSource(); src.buffer=buf;
+    const g=audioCtx.createGain(); g.gain.value=Math.min(1, p.volume||1);
+    let pan=audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+    if(pan){ pan.pan.value=Math.max(-1,Math.min(1,(p.pan!=null?p.pan:0))); src.connect(g).connect(pan).connect(audioCtx.destination); }
+    else src.connect(g).connect(audioCtx.destination);
+    const sr=p.sampleRate||buf.sampleRate;
+    const offset=(p.sampleStart||0)/sr;
+    const dur=(p.sampleEnd>p.sampleStart)?(p.sampleEnd-p.sampleStart)/sr:undefined;
+    src.start(0, offset, dur);
+    if(p.choke) chokeNodes[p.choke]=src;
+    if(cell){ cell.classList.add('playing'); const ms=Math.min(1200,(dur||0.3)*1000)+60;
+      setTimeout(()=>cell.classList.remove('playing'), ms); }
+  }catch(e){ logLine('Audio: '+e.message,'err'); }
+}
+
+function noteName(n){const N=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];return N[((n%12)+12)%12]+(Math.floor(n/12)-2);}
+
+function renderPreview(){
+  const card=$('previewCard');
+  if(!preview || !preview.pads.size){ card.style.display='none'; return; }
+  card.style.display='block';
+  const total=preview.pads.size;
+  const maxPad=Math.max(...preview.pads.keys());
+  const banksUsed=Math.ceil(maxPad/16);
+  $('pvMeta').textContent='• '+total+' padów'+(preview.isTool?' • kit z forward-toola (1:1)':'')+(preview.missing&&preview.missing.length?' • brak '+preview.missing.length+' sampli':'');
+  // banki
+  const bk=$('pvBanks'); bk.innerHTML='';
+  for(let b=0;b<Math.max(1,banksUsed);b++){
+    const has=[...preview.pads.keys()].some(k=>Math.floor((k-1)/16)===b);
+    const el=document.createElement('div');
+    el.className='bk'+(b===bank?' active':'')+(has?' has':'');
+    el.textContent='Bank '+String.fromCharCode(65+b);
+    el.onclick=()=>{bank=b;renderPreview();};
+    bk.appendChild(el);
+  }
+  // siatka
+  const grid=$('previewGrid'); grid.innerHTML='';
+  for(const row of MPC_LAYOUT) for(const pin of row){
+    const padNo=bank*16+pin;
+    const p=preview.pads.get(padNo);
+    const cell=document.createElement('div');
+    if(!p){ cell.className='pad empty';
+      cell.innerHTML=`<div class="pn"><span>pad ${padNo}</span></div><div class="meta">—</div>`; }
+    else if(p.missing){ cell.className='pad miss';
+      cell.innerHTML=`<div class="pn"><span>pad ${padNo}</span></div><div class="sn">${p.sampleName}</div><div class="meta">brak WAV</div>`; }
+    else {
+      cell.className='pad has';
+      const dot=p.choke?`<span class="dot" style="background:${MG_COLORS[p.choke]||'#888'}"></span>`:'';
+      const trim=(p.sampleStart>0||(p.frames&&p.sampleEnd<p.frames))?' ✂':'';
+      cell.innerHTML=`<div class="pn"><span>pad ${padNo}</span>${dot}</div>`+
+        `<div class="sn">${p.sampleName}</div>`+
+        `<div class="meta">${noteName(p.srcNote)} (${p.srcNote})${p.choke?' • MG'+p.choke:''}${trim}</div>`;
+      cell.onclick=()=>playPad(p, cell);
+    }
+    grid.appendChild(cell);
+  }
+}
+
+let pvTimer=null;
+function schedulePreview(){ clearTimeout(pvTimer); pvTimer=setTimeout(buildPreview, 120); }
+async function buildPreview(){
+  if(!progFile || !sampleMap.size){ preview=null; renderPreview(); return; }
+  try{
+    const bytes=new Uint8Array(await progFile.arrayBuffer());
+    const name=baseNoExt(progFile.name);
+    if(mode==='rev') preview=await M.previewReverse(bytes, sampleMap, {compact:$('compact').checked, programName:name});
+    else preview=await M.previewForward(bytes, sampleMap, {firstNote:($('firstNote').value.trim()===''?null:parseInt($('firstNote').value,10)), programName:name});
+    bank=0; renderPreview();
+  }catch(e){ preview=null; renderPreview(); }
+}
 function logLine(s, cls){ const l=$('log'); l.classList.add('show');
   l.innerHTML += (cls?`<span class="${cls}">${s}</span>`:s)+'\n'; l.scrollTop=l.scrollHeight; }
 function clearLog(){ $('log').innerHTML=''; $('log').classList.remove('show'); $('dl').classList.remove('show'); }
@@ -130,6 +245,7 @@ function setMode(m){
   $('optCompact').style.display = rev ? 'flex' : 'none';
   $('optFirstNote').style.display = rev ? 'none' : 'flex';
   progFile=null; $('progFiles').innerHTML=''; clearLog();
+  preview=null; renderPreview();
 }
 
 // ---- file collection ----
@@ -185,14 +301,14 @@ setupDrop($('dropProg'), async files=>{
   for(const f of files){ if(isProg(f.name)){ progFile=f; break; } }
   // jeśli wrzucono też sample obok programu — dorzuć
   for(const f of files){ if(isSample(f.name)) await addSampleFile(f); }
-  renderProg(); renderSamples();
+  renderProg(); renderSamples(); schedulePreview();
 });
 setupDrop($('dropSamp'), async files=>{
   for(const f of files){
     if(isSample(f.name)) await addSampleFile(f);
     else if(isProg(f.name) && !progFile){ progFile=f; }
   }
-  renderProg(); renderSamples();
+  renderProg(); renderSamples(); schedulePreview();
 });
 
 // ---- run ----
@@ -232,6 +348,8 @@ async function run(){
   }
 }
 
+$('compact').addEventListener('change', schedulePreview);
+$('firstNote').addEventListener('input', schedulePreview);
 setMode('rev');
 </script>
 </body>

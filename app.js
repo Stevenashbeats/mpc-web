@@ -426,11 +426,84 @@
     };
   }
 
+  // =================================================== PODGLĄD (z audio)
+  function wavInfo(buf) {
+    try {
+      const dv = new DataView(buf);
+      if (dv.byteLength < 12 || dv.getUint32(0, false) !== 0x52494646)
+        return { frames: 0, sampleRate: 44100, channels: 1 };
+      let off = 12, blockAlign = 0, sampleRate = 44100, channels = 1;
+      while (off + 8 <= dv.byteLength) {
+        const id = dv.getUint32(off, false), size = dv.getUint32(off + 4, true);
+        if (id === 0x666d7420) {
+          channels = dv.getUint16(off + 8 + 2, true);
+          sampleRate = dv.getUint32(off + 8 + 4, true);
+          blockAlign = dv.getUint16(off + 8 + 12, true);
+        } else if (id === 0x64617461) {
+          return { frames: blockAlign ? Math.floor(size / blockAlign) : 0, sampleRate, channels };
+        }
+        off += 8 + size + (size & 1);
+      }
+    } catch (e) { /* ignore */ }
+    return { frames: 0, sampleRate: 44100, channels: 1 };
+  }
+  function _bufOf(u8) { return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength); }
+
+  async function previewReverse(adgBytes, sampleFiles, opts) {
+    opts = opts || {};
+    const xml = new TextDecoder().decode(await gunzip(adgBytes));
+    const parsed = parseAdg(xml, opts.programName || "Kit");
+    const mapping = opts.mapping || defaultMapping(parsed.pads, !!opts.compact);
+    const pads = new Map(); const missing = [];
+    for (const [padNo, idx] of mapping) {
+      const pad = parsed.pads[idx]; if (!pad) continue;
+      const src = resolveSample(pad, sampleFiles);
+      if (!src) {
+        missing.push(pad.relPath || pad.sampleName);
+        pads.set(padNo, { sampleName: pad.sampleName || "?", srcNote: pad.midi, choke: pad.choke, missing: true });
+        continue;
+      }
+      const info = wavInfo(_bufOf(src.bytes));
+      let start = Math.max(0, pad.sampleStart);
+      let end = pad.sampleEnd > 0 ? pad.sampleEnd : info.frames;
+      if (info.frames && end > info.frames) end = info.frames;
+      pads.set(padNo, {
+        sampleName: baseNoExt(src.name), fileName: src.name, bytes: src.bytes,
+        srcNote: pad.midi, choke: pad.choke, volumeDb: pad.volumeDb,
+        volume: dbToMpcVolume(pad.volumeDb), pan: pad.pan,
+        sampleStart: start, sampleEnd: end, sampleRate: info.sampleRate, frames: info.frames,
+      });
+    }
+    return { pads, missing, isTool: parsed.isTool, total: parsed.pads.length };
+  }
+
+  async function previewForward(xpmBytes, sampleFiles, opts) {
+    opts = opts || {};
+    const xml = new TextDecoder().decode(xpmBytes);
+    const parsed = parseXpm(xml, opts.programName);
+    const maxInst = Math.max(...parsed.padMap.keys());
+    const fn = (opts.firstNote != null) ? opts.firstNote : autoFirstNote(maxInst);
+    const pads = new Map(); const missing = [];
+    for (const [instNum, sampleName] of parsed.padMap) {
+      const choke = parsed.muteMap.get(instNum) || 0;
+      const src = sampleFiles.get(sampleName.toLowerCase()) || sampleFiles.get(baseNoExt(sampleName).toLowerCase());
+      const note = fn + instNum - 1;
+      if (!src) { missing.push(sampleName); pads.set(instNum, { sampleName, srcNote: note, choke, missing: true }); continue; }
+      const info = wavInfo(_bufOf(src.bytes));
+      pads.set(instNum, {
+        sampleName: baseNoExt(src.name), fileName: src.name, bytes: src.bytes,
+        srcNote: note, choke, sampleStart: 0, sampleEnd: info.frames,
+        sampleRate: info.sampleRate, frames: info.frames, volume: 1,
+      });
+    }
+    return { pads, missing, firstNote: fn, total: parsed.padMap.size };
+  }
+
   // ----------------------------------------------------------------- export
   const API = {
-    gunzip, gzip, wavFrames, makeZip, crc32,
-    parseAdg, defaultMapping, buildXpm, convertReverse,
-    parseXpm, buildAdgXml, convertForward,
+    gunzip, gzip, wavFrames, wavInfo, makeZip, crc32,
+    parseAdg, defaultMapping, buildXpm, convertReverse, previewReverse,
+    parseXpm, buildAdgXml, convertForward, previewForward,
     dbToMpcVolume, mpcVolumeToDb, baseNoExt,
   };
   G.MPCWEB = API;
