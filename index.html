@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MPC ⇄ Ableton Drum Rack Converter</title>
+<style>
+  :root{ --bg:#15171c; --panel:#1e2128; --panel2:#262a33; --line:#333845;
+         --txt:#e6e8ec; --dim:#9aa3b2; --acc:#ff7a3d; --acc2:#3da8ff; --ok:#5fd38a; --err:#ff6b6b; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:24px 16px 60px}
+  h1{font-size:22px;margin:6px 0 2px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:20px}
+  .tabs{display:flex;gap:8px;margin-bottom:18px}
+  .tab{flex:1;padding:14px 10px;border:1px solid var(--line);border-radius:12px;
+       background:var(--panel);cursor:pointer;text-align:center;transition:.15s}
+  .tab small{display:block;color:var(--dim);font-size:12px;margin-top:3px}
+  .tab.active{border-color:var(--acc);background:#2a2018;box-shadow:0 0 0 1px var(--acc) inset}
+  .tab.active.rev{border-color:var(--acc2);background:#16222e;box-shadow:0 0 0 1px var(--acc2) inset}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+  .card h3{margin:0 0 4px;font-size:14px}
+  .card p.hint{margin:0 0 10px;color:var(--dim);font-size:12.5px}
+  .drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;
+        color:var(--dim);cursor:pointer;transition:.15s;background:var(--panel2)}
+  .drop.over{border-color:var(--acc2);color:var(--txt);background:#1b2430}
+  .drop b{color:var(--txt)}
+  .files{margin-top:10px;font-size:12.5px;color:var(--dim);max-height:120px;overflow:auto}
+  .files .f{padding:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .opt{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:13.5px}
+  input[type=number]{width:70px;background:var(--panel2);border:1px solid var(--line);
+        color:var(--txt);border-radius:8px;padding:6px 8px}
+  .btn{display:block;width:100%;padding:15px;border:0;border-radius:12px;font-size:16px;
+       font-weight:600;color:#10131a;background:var(--acc);cursor:pointer;margin-top:6px}
+  .btn.rev{background:var(--acc2)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .log{background:#0e1014;border:1px solid var(--line);border-radius:10px;padding:12px;
+       font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;color:var(--dim);
+       max-height:240px;overflow:auto;margin-top:12px;display:none}
+  .log.show{display:block}
+  .dl{display:none;margin-top:12px;text-align:center}
+  .dl.show{display:block}
+  .dl a{display:inline-block;padding:13px 22px;background:var(--ok);color:#0c1410;
+        border-radius:11px;text-decoration:none;font-weight:600}
+  .ok{color:var(--ok)} .err{color:var(--err)} .acc{color:var(--acc2)}
+  footer{color:var(--dim);font-size:12px;text-align:center;margin-top:24px}
+  footer a{color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MPC ⇄ Ableton Drum Rack</h1>
+  <div class="sub">Konwersja w przeglądarce — pliki nie wychodzą z Twojego komputera. Nie wymaga instalacji.</div>
+
+  <div class="tabs">
+    <div class="tab rev active" id="tabRev" onclick="setMode('rev')">
+      Ableton → MPC <small>.adg → .xpm (MPC 3)</small></div>
+    <div class="tab" id="tabFwd" onclick="setMode('fwd')">
+      MPC → Ableton <small>.xpm → .adg (Live 12)</small></div>
+  </div>
+
+  <div class="card">
+    <h3 id="prgTitle">1. Plik programu (.adg)</h3>
+    <p class="hint" id="prgHint">Przeciągnij plik drum racka Ableton, albo kliknij by wybrać.</p>
+    <div class="drop" id="dropProg">
+      <b id="dropProgLbl">Upuść .adg tutaj</b><br>lub kliknij, by wybrać
+    </div>
+    <div class="files" id="progFiles"></div>
+  </div>
+
+  <div class="card">
+    <h3>2. Sample (pliki WAV)</h3>
+    <p class="hint">Przeciągnij folder z samplami albo zaznacz pliki .wav. Dopasowanie po nazwie.</p>
+    <div class="drop" id="dropSamp">
+      <b>Upuść folder / pliki WAV tutaj</b><br>lub kliknij, by wybrać
+    </div>
+    <div class="files" id="sampFiles"></div>
+  </div>
+
+  <div class="card">
+    <h3>3. Opcje</h3>
+    <div class="opt" id="optCompact">
+      <input type="checkbox" id="compact">
+      <label for="compact">Compact — najniższy pad na pad MPC 1 (gdy rack nie zaczyna się od C1)</label>
+    </div>
+    <div class="opt" id="optFirstNote" style="display:none">
+      <label for="firstNote">Pierwsza nuta MIDI (pad 1):</label>
+      <input type="number" id="firstNote" min="0" max="120" value="36">
+      <span style="color:var(--dim)">36 = C1 (auto, gdy puste)</span>
+    </div>
+  </div>
+
+  <button class="btn rev" id="goBtn" onclick="run()">Konwertuj</button>
+
+  <div class="log" id="log"></div>
+  <div class="dl" id="dl"><a id="dlLink" download>⬇ Pobierz kit (.zip)</a></div>
+
+  <footer>
+    Format MPC 3 odtworzony z pliku natywnego • działa offline po załadowaniu •
+    <a href="https://github.com/Stevenashbeats/drumrack2mpc" target="_blank">źródło</a>
+  </footer>
+</div>
+
+<script src="templates.js"></script>
+<script src="app.js"></script>
+<script>
+const M = window.MPCWEB;
+let mode = 'rev';                 // 'rev' = adg->xpm, 'fwd' = xpm->adg
+let progFile = null;              // File
+let sampleMap = new Map();        // lowerBaseNoExt -> {name, bytes}
+let lastUrl = null;
+
+function $(id){return document.getElementById(id)}
+function logLine(s, cls){ const l=$('log'); l.classList.add('show');
+  l.innerHTML += (cls?`<span class="${cls}">${s}</span>`:s)+'\n'; l.scrollTop=l.scrollHeight; }
+function clearLog(){ $('log').innerHTML=''; $('log').classList.remove('show'); $('dl').classList.remove('show'); }
+
+function setMode(m){
+  mode=m;
+  $('tabRev').classList.toggle('active', m==='rev');
+  $('tabFwd').classList.toggle('active', m==='fwd');
+  $('goBtn').classList.toggle('rev', m==='rev');
+  const rev = m==='rev';
+  $('prgTitle').textContent = rev ? '1. Plik programu (.adg)' : '1. Plik programu (.xpm)';
+  $('dropProgLbl').textContent = rev ? 'Upuść .adg tutaj' : 'Upuść .xpm tutaj';
+  $('prgHint').textContent = rev
+    ? 'Przeciągnij plik drum racka Ableton, albo kliknij by wybrać.'
+    : 'Przeciągnij program MPC (.xpm), albo kliknij by wybrać.';
+  $('optCompact').style.display = rev ? 'flex' : 'none';
+  $('optFirstNote').style.display = rev ? 'none' : 'flex';
+  progFile=null; $('progFiles').innerHTML=''; clearLog();
+}
+
+// ---- file collection ----
+const PROG_EXT = ()=> mode==='rev' ? '.adg' : '.xpm';
+function isProg(name){ return name.toLowerCase().endsWith(PROG_EXT()); }
+function isSample(name){ return /\.(wav|aif|aiff|flac|mp3|ogg)$/i.test(name); }
+function baseNoExt(n){ const b=n.split(/[\\/]/).pop(); const i=b.lastIndexOf('.'); return i>0?b.slice(0,i):b; }
+
+async function addSampleFile(file){
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  sampleMap.set(baseNoExt(file.name).toLowerCase(), {name:file.name, bytes});
+}
+function renderProg(){ $('progFiles').innerHTML = progFile ? `<div class="f acc">✓ ${progFile.name}</div>` : ''; }
+function renderSamples(){
+  const n = sampleMap.size;
+  $('sampFiles').innerHTML = n
+    ? `<div class="f ok">✓ ${n} sampli załadowanych</div>` + [...sampleMap.values()].slice(0,6).map(s=>`<div class="f">${s.name}</div>`).join('') + (n>6?`<div class="f">… i ${n-6} więcej</div>`:'')
+    : '';
+}
+
+// ---- drag & drop (pliki + foldery) ----
+function setupDrop(el, onFiles){
+  el.addEventListener('click', ()=>{
+    const inp=document.createElement('input'); inp.type='file'; inp.multiple=true;
+    if(el===$('dropSamp')) inp.webkitdirectory=true;
+    inp.onchange=()=>onFiles([...inp.files]); inp.click();
+  });
+  ['dragover','dragenter'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();el.classList.add('over')}));
+  ['dragleave','drop'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();el.classList.remove('over')}));
+  el.addEventListener('drop', async e=>{
+    const items=e.dataTransfer.items;
+    const files=[];
+    if(items && items.length && items[0].webkitGetAsEntry){
+      const entries=[...items].map(i=>i.webkitGetAsEntry()).filter(Boolean);
+      for(const en of entries) await walkEntry(en, files);
+    } else {
+      files.push(...e.dataTransfer.files);
+    }
+    onFiles(files);
+  });
+}
+function walkEntry(entry, out){
+  return new Promise(res=>{
+    if(entry.isFile){ entry.file(f=>{out.push(f); res();}); }
+    else if(entry.isDirectory){
+      const rd=entry.createReader();
+      rd.readEntries(async ents=>{ for(const e of ents) await walkEntry(e,out); res(); });
+    } else res();
+  });
+}
+
+setupDrop($('dropProg'), async files=>{
+  for(const f of files){ if(isProg(f.name)){ progFile=f; break; } }
+  // jeśli wrzucono też sample obok programu — dorzuć
+  for(const f of files){ if(isSample(f.name)) await addSampleFile(f); }
+  renderProg(); renderSamples();
+});
+setupDrop($('dropSamp'), async files=>{
+  for(const f of files){
+    if(isSample(f.name)) await addSampleFile(f);
+    else if(isProg(f.name) && !progFile){ progFile=f; }
+  }
+  renderProg(); renderSamples();
+});
+
+// ---- run ----
+async function run(){
+  clearLog();
+  if(!progFile){ logLine('Najpierw dodaj plik '+PROG_EXT(), 'err'); return; }
+  if(!sampleMap.size){ logLine('Dodaj pliki WAV (sample).', 'err'); return; }
+  $('goBtn').disabled=true; logLine('Konwertuję '+progFile.name+' …');
+  try{
+    const bytes = new Uint8Array(await progFile.arrayBuffer());
+    const name = baseNoExt(progFile.name);
+    let res, zipName;
+    if(mode==='rev'){
+      res = await M.convertReverse(bytes, sampleMap, {compact:$('compact').checked, programName:name});
+      logLine('Pady: '+res.placed+(res.isTool?'  (kit z forward-toola → mapowanie 1:1)':''), 'ok');
+    } else {
+      const fnRaw = $('firstNote').value.trim();
+      const firstNote = fnRaw==='' ? null : parseInt(fnRaw,10);
+      res = await M.convertForward(bytes, sampleMap, {firstNote, programName:name});
+      logLine('Pady: '+res.placed+'  | pierwsza nuta MIDI '+res.firstNote, 'ok');
+      if(res.truncated) logLine('Uwaga: '+res.truncated+' padów poza zakresem MIDI 0-127 — pominięte.', 'err');
+    }
+    if(res.missing && res.missing.length){
+      logLine('Brakujące sample ('+res.missing.length+'): '+res.missing.slice(0,8).join(', ')+(res.missing.length>8?' …':''), 'err');
+    }
+    if(lastUrl) URL.revokeObjectURL(lastUrl);
+    const blob = new Blob([res.zip], {type:'application/zip'});
+    lastUrl = URL.createObjectURL(blob);
+    $('dlLink').href = lastUrl;
+    $('dlLink').download = name + (mode==='rev'?'_MPC':'_Ableton') + '.zip';
+    $('dl').classList.add('show');
+    logLine('Gotowe ✓  Pobierz ZIP poniżej (kit: '+(mode==='rev'?'.xpm':'.adg')+' + sample).', 'ok');
+  }catch(err){
+    logLine('BŁĄD: '+err.message, 'err');
+  }finally{
+    $('goBtn').disabled=false;
+  }
+}
+
+setMode('rev');
+</script>
+</body>
+</html>
