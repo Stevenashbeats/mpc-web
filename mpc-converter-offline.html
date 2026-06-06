@@ -75,8 +75,11 @@
   .dt-name{font-weight:600;font-size:14px;margin-bottom:8px}
   .dt-rows{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12.5px;margin-bottom:12px}
   .dt-rows .k{color:var(--dim)} .dt-rows .v{color:var(--txt)}
+  .dt-vol{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px}
   .dt-choke{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
   .dt-hint{color:var(--acc);font-size:11.5px}
+  .pad.dropover{border-color:var(--ok);background:#16241b}
+  .pad[draggable=true]{cursor:grab}
   .ok{color:var(--ok)} .err{color:var(--err)} .acc{color:var(--acc2)}
   footer{color:var(--dim);font-size:12px;text-align:center;margin-top:22px}
   footer a{color:var(--dim)}
@@ -133,7 +136,7 @@
     <div class="col-right">
       <div class="card">
         <h3>Pady <span id="pvMeta"></span></h3>
-        <p class="hint">Klik / klawisze <b>1234 qwer asdf zxcv</b> = odsłuch (chop, głośność, pan, choke). Klik = szczegóły poniżej.</p>
+        <p class="hint">Klik / klawisze <b>1234 qwer asdf zxcv</b> = odsłuch. Klik = szczegóły + edycja głośności/choke. <b>Przeciągnij pad na inny</b> (lub na przycisk banku) = przenieś sampel.</p>
         <div class="banks" id="pvBanks"></div>
         <div class="padgrid" id="previewGrid"><div style="color:var(--dim);font-size:12.5px;grid-column:1/-1">Wczytaj plik + sample, aby zobaczyć pady.</div></div>
         <div class="details" id="details">
@@ -141,6 +144,11 @@
           <div id="dtBody" style="display:none">
             <div class="dt-name" id="dtName"></div>
             <div class="dt-rows" id="dtRows"></div>
+            <div class="dt-vol">
+              <label for="volSlider">Głośność:</label>
+              <input type="range" id="volSlider" min="-40" max="6" step="0.5" style="flex:1;min-width:110px">
+              <span id="volVal" style="min-width:70px;text-align:right"></span>
+            </div>
             <div class="dt-choke">
               <label for="chokeSel">Choke / Mute group:</label>
               <select id="chokeSel"></select>
@@ -480,9 +488,10 @@
       let sliceStart, sliceEnd, sStart, sEnd;
       if (trimmed) { sliceStart = start; sliceEnd = Math.max(start, end - 1); sStart = start; sEnd = end; }
       else { sliceStart = 0; sliceEnd = Math.max(0, frames - 1); sStart = 0; sEnd = 0; }
+      const effDb = (opts.volumeOverride && opts.volumeOverride.has(padNo)) ? opts.volumeOverride.get(padNo) : pad.volumeDb;
       assignments.set(padNo, {
         sampleName: baseNoExt(src.name), muteGroup: chokeOf(opts.chokeOverride, padNo, pad.choke),
-        volume: dbToMpcVolume(pad.volumeDb), pan: Math.min(Math.max(0.5 + pad.pan * 0.5, 0), 1),
+        volume: dbToMpcVolume(effDb), pan: Math.min(Math.max(0.5 + pad.pan * 0.5, 0), 1),
         sampleStart: sStart, sampleEnd: sEnd, sliceStart, sliceEnd, xfade: -1,
       });
     }
@@ -531,7 +540,7 @@
     // relParts = katalogi w ścieżce (zwykle puste w web)
     return relParts.map((d, i) => '<RelativePathElement Id="' + (i + 8) + '" Dir="' + xmlEscape(d) + '" />').join("\n");
   }
-  function renderPad(padId, padNote, sampleFileName, fileSize, choke) {
+  function renderPad(padId, padNote, sampleFileName, fileSize, choke, volDb) {
     let out = TEMPLATES.adg_pad;
     const stem = baseNoExt(sampleFileName);
     out = out.replace(/<%- PadNumber %>/g, String(padId));
@@ -540,6 +549,8 @@
     out = out.replace(/<%= PadNote %>/g, String(padNote));
     out = out.replace(/<%= ChokeGroup %>/g, String(choke || 0));
     out = out.replace(/__SAMPLE_ABS_PATH__/g, xmlEscape(sampleFileName));
+    // głośność Simplera (dB) - unikalne <Manual Value="-12" /> w szablonie
+    if (volDb != null) out = out.replace('<Manual Value="-12" />', '<Manual Value="' + volDb + '" />');
     out = out.replace(/<PathHint>[\s\S]*?<\/PathHint>/, "<PathHint>\n\n</PathHint>");
     out = out.replace(/<FileSize Value="\d+" \/>/, '<FileSize Value="' + (fileSize || 0) + '" />');
     out = out.replace(/<Crc Value="\d+" \/>/, '<Crc Value="0" />');
@@ -564,7 +575,7 @@
       const sp = padPaths.get(instNum);
       const recv = FACTORY - idx;
       const choke = muteMap.get(instNum) || 0;
-      padsXml.push(renderPad(idx, recv, sp.fileName, sp.size, choke));
+      padsXml.push(renderPad(idx, recv, sp.fileName, sp.size, choke, sp.volDb));
     });
     const padScroll = Math.max(0, Math.floor(firstVisible / 4));
     const head = TEMPLATES.adg_head.replace("__PAD_SCROLL_POSITION__", String(padScroll));
@@ -582,15 +593,18 @@
     opts = opts || {};
     const xml = new TextDecoder().decode(xpmBytes);
     const parsed = parseXpm(xml, opts.programName);
+    const padMap = opts.padMapOverride || parsed.padMap;
+    const vov = opts.volumeOverride;
     const padPaths = new Map();
     const outFiles = new Map();
     const missing = [];
-    for (const [instNum, sampleName] of parsed.padMap) {
+    for (const [instNum, sampleName] of padMap) {
       const key = sampleName.toLowerCase();
       const src = sampleFiles.get(key) || sampleFiles.get(baseNoExt(sampleName).toLowerCase());
       if (!src) { missing.push(sampleName); continue; }
       if (!outFiles.has(src.name)) outFiles.set(src.name, { name: src.name, data: src.bytes });
-      padPaths.set(instNum, { fileName: src.name, size: src.bytes.length });
+      const volDb = (vov && vov.has(instNum)) ? vov.get(instNum) : null;
+      padPaths.set(instNum, { fileName: src.name, size: src.bytes.length, volDb });
     }
     if (!padPaths.size) throw new Error("Żaden sampel nie został dopasowany. Dodaj pliki WAV.");
     const maxInst = Math.max(...padPaths.keys());
@@ -641,9 +655,11 @@
       const pad = parsed.pads[idx]; if (!pad) continue;
       const src = resolveSample(pad, sampleFiles);
       const choke = chokeOf(opts.chokeOverride, padNo, pad.choke);
+      const vov = opts.volumeOverride;
+      const effDb = (vov && vov.has(padNo)) ? vov.get(padNo) : pad.volumeDb;
       if (!src) {
         missing.push(pad.relPath || pad.sampleName);
-        pads.set(padNo, { sampleName: pad.sampleName || "?", srcNote: pad.midi, choke, missing: true });
+        pads.set(padNo, { sampleName: pad.sampleName || "?", srcNote: pad.midi, choke, volumeDb: effDb, missing: true });
         continue;
       }
       const info = wavInfo(_bufOf(src.bytes));
@@ -652,34 +668,39 @@
       if (info.frames && end > info.frames) end = info.frames;
       pads.set(padNo, {
         sampleName: baseNoExt(src.name), fileName: src.name, bytes: src.bytes,
-        srcNote: pad.midi, choke, volumeDb: pad.volumeDb,
-        volume: dbToMpcVolume(pad.volumeDb), pan: pad.pan,
+        srcNote: pad.midi, choke, volumeDb: effDb,
+        volume: dbToMpcVolume(effDb), gain: Math.min(1, Math.pow(10, effDb / 20)), pan: pad.pan,
         sampleStart: start, sampleEnd: end, sampleRate: info.sampleRate, frames: info.frames,
       });
     }
-    return { pads, missing, isTool: parsed.isTool, total: parsed.pads.length };
+    return { pads, missing, isTool: parsed.isTool, total: parsed.pads.length, mapping };
   }
 
   async function previewForward(xpmBytes, sampleFiles, opts) {
     opts = opts || {};
     const xml = new TextDecoder().decode(xpmBytes);
     const parsed = parseXpm(xml, opts.programName);
-    const maxInst = Math.max(...parsed.padMap.keys());
+    const padMap = opts.padMapOverride || parsed.padMap;
+    const vov = opts.volumeOverride;
+    const maxInst = Math.max(...padMap.keys());
     const fn = (opts.firstNote != null) ? opts.firstNote : autoFirstNote(maxInst);
     const pads = new Map(); const missing = [];
-    for (const [instNum, sampleName] of parsed.padMap) {
+    for (const [instNum, sampleName] of padMap) {
       const choke = chokeOf(opts.chokeOverride, instNum, parsed.muteMap.get(instNum) || 0);
+      const effDb = (vov && vov.has(instNum)) ? vov.get(instNum) : -12;
       const src = sampleFiles.get(sampleName.toLowerCase()) || sampleFiles.get(baseNoExt(sampleName).toLowerCase());
       const note = fn + instNum - 1;
-      if (!src) { missing.push(sampleName); pads.set(instNum, { sampleName, srcNote: note, choke, missing: true }); continue; }
+      if (!src) { missing.push(sampleName); pads.set(instNum, { sampleName, srcNote: note, choke, volumeDb: effDb, missing: true }); continue; }
       const info = wavInfo(_bufOf(src.bytes));
       pads.set(instNum, {
         sampleName: baseNoExt(src.name), fileName: src.name, bytes: src.bytes,
-        srcNote: note, choke, sampleStart: 0, sampleEnd: info.frames,
-        sampleRate: info.sampleRate, frames: info.frames, volume: 1,
+        srcNote: note, choke, volumeDb: effDb, volume: 1,
+        gain: Math.min(1, Math.pow(10, effDb / 20)),
+        sampleStart: 0, sampleEnd: info.frames,
+        sampleRate: info.sampleRate, frames: info.frames,
       });
     }
-    return { pads, missing, firstNote: fn, total: parsed.padMap.size };
+    return { pads, missing, firstNote: fn, total: padMap.size, padMap };
   }
 
   // ----------------------------------------------------------------- export
@@ -702,6 +723,7 @@ function $(id){return document.getElementById(id)}
 
 // ---- podgląd + audio + edycja ----
 let preview=null, bank=0, audioCtx=null, selectedPad=null;
+let volumeOverrides=new Map(), layout=new Map(), layoutSeeded=false, dragSrc=null;
 const bufCache=new Map(), chokeNodes={}, padCells=new Map(), chokeOverrides=new Map();
 const MPC_LAYOUT=[[13,14,15,16],[9,10,11,12],[5,6,7,8],[1,2,3,4]];
 const KEYMAP={'1':13,'2':14,'3':15,'4':16,'q':9,'w':10,'e':11,'r':12,
@@ -728,7 +750,7 @@ async function playPad(p,cell){
     const buf=await getBuffer(p);
     if(p.choke&&chokeNodes[p.choke]){try{chokeNodes[p.choke].stop()}catch(e){}}
     const src=audioCtx.createBufferSource();src.buffer=buf;
-    const g=audioCtx.createGain();g.gain.value=Math.min(1,p.volume||1);
+    const g=audioCtx.createGain();g.gain.value=Math.min(1,(p.gain!=null?p.gain:(p.volume||1)));
     const pan=audioCtx.createStereoPanner?audioCtx.createStereoPanner():null;
     if(pan){pan.pan.value=Math.max(-1,Math.min(1,(p.pan!=null?p.pan:0)));src.connect(g).connect(pan).connect(audioCtx.destination);}
     else src.connect(g).connect(audioCtx.destination);
@@ -764,6 +786,9 @@ function renderDetails(padNo){
     if(p.sampleStart>0||(p.frames&&p.sampleEnd<p.frames)) rows.push(['Chop','✂ przycięty wycinek']);
   }
   $('dtRows').innerHTML=rows.map(r=>`<div class="k">${r[0]}</div><div class="v">${r[1]}</div>`).join('');
+  const db=(p.volumeDb!=null)?p.volumeDb:0;
+  $('volSlider').value=String(db);
+  $('volVal').textContent=db.toFixed(1)+' dB'+(volumeOverrides.has(padNo)?' ✎':'');
   $('chokeSel').value=String(p.choke||0);
   $('chokeHint').textContent = chokeOverrides.has(padNo) ? '✎ edytowane' : '';
 }
@@ -784,6 +809,8 @@ function renderPreview(){
     el.className='bk'+(b===bank?' active':'')+(has?' has':'');
     el.textContent='Bank '+String.fromCharCode(65+b);
     el.onclick=()=>{bank=b;renderPreview();};
+    el.addEventListener('dragover',e=>e.preventDefault());
+    el.addEventListener('drop',e=>{e.preventDefault(); if(dragSrc!=null){const pin=((dragSrc-1)%16)+1; movePad(dragSrc,b*16+pin);}});
     bk.appendChild(el);
   }
   grid.innerHTML='';
@@ -802,6 +829,10 @@ function renderPreview(){
         `<div class="meta">${noteName(p.srcNote)}${p.choke?' • MG'+p.choke:''}${trim}</div>`;
       cell.onclick=()=>triggerPad(padNo); padCells.set(padNo,cell);
     }
+    cell.addEventListener('dragover',e=>{e.preventDefault();cell.classList.add('dropover');});
+    cell.addEventListener('dragleave',()=>cell.classList.remove('dropover'));
+    cell.addEventListener('drop',e=>{e.preventDefault();cell.classList.remove('dropover'); if(dragSrc!=null)movePad(dragSrc,padNo);});
+    if(p){ cell.draggable=true; cell.addEventListener('dragstart',e=>{dragSrc=padNo;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(padNo));}catch(_){}}); }
     grid.appendChild(cell);
   }
   highlightSel();
@@ -810,15 +841,19 @@ function renderPreview(){
 
 let pvTimer=null;
 function schedulePreview(){clearTimeout(pvTimer);pvTimer=setTimeout(buildPreview,120);}
-function resetPreview(){ chokeOverrides.clear(); selectedPad=null; bank=0; schedulePreview(); }
+function resetPreview(){ chokeOverrides.clear(); volumeOverrides.clear(); layout=new Map(); layoutSeeded=false; selectedPad=null; bank=0; schedulePreview(); }
 async function buildPreview(){
-  if(!progFile||!sampleMap.size){preview=null;renderPreview();return;}
+  if(!progFile||!sampleMap.size){preview=null;layout=new Map();layoutSeeded=false;renderPreview();return;}
   try{
     const bytes=new Uint8Array(await progFile.arrayBuffer());
     const name=baseNoExt(progFile.name);
-    const opts={programName:name, chokeOverride:chokeOverrides};
-    if(mode==='rev'){ opts.compact=$('compact').checked; preview=await M.previewReverse(bytes,sampleMap,opts); }
-    else { opts.firstNote=$('firstNote').value.trim()===''?null:parseInt($('firstNote').value,10); preview=await M.previewForward(bytes,sampleMap,opts); }
+    const opts={programName:name, chokeOverride:chokeOverrides, volumeOverride:volumeOverrides};
+    if(mode==='rev'){ opts.compact=$('compact').checked; if(layoutSeeded)opts.mapping=layout;
+      preview=await M.previewReverse(bytes,sampleMap,opts);
+      if(!layoutSeeded&&preview&&preview.mapping){layout=new Map(preview.mapping);layoutSeeded=true;} }
+    else { opts.firstNote=$('firstNote').value.trim()===''?null:parseInt($('firstNote').value,10); if(layoutSeeded)opts.padMapOverride=layout;
+      preview=await M.previewForward(bytes,sampleMap,opts);
+      if(!layoutSeeded&&preview&&preview.padMap){layout=new Map(preview.padMap);layoutSeeded=true;} }
     renderPreview();
   }catch(e){preview=null;renderPreview();}
 }
@@ -826,6 +861,29 @@ async function buildPreview(){
 // choke select 0..16
 (function(){const s=$('chokeSel');for(let i=0;i<=16;i++){const o=document.createElement('option');o.value=i;o.textContent=i===0?'0 (brak)':String(i);s.appendChild(o);}
   s.addEventListener('change',()=>{ if(selectedPad==null)return; chokeOverrides.set(selectedPad,parseInt(s.value,10)); buildPreview(); });})();
+
+// suwak głośności (dB): na żywo aktualizuje pad, po puszczeniu pełny rebuild
+(function(){const sl=$('volSlider');
+  sl.addEventListener('input',()=>{ if(selectedPad==null)return; const db=parseFloat(sl.value);
+    $('volVal').textContent=db.toFixed(1)+' dB ✎'; volumeOverrides.set(selectedPad,db);
+    const p=preview&&preview.pads.get(selectedPad);
+    if(p){ p.volumeDb=db; p.gain=Math.min(1,Math.pow(10,db/20)); } });
+  sl.addEventListener('change',()=>{ buildPreview(); const p=preview&&preview.pads.get(selectedPad); if(p)playPad(p,padCells.get(selectedPad)); });
+})();
+
+// move sampla między padami (też między bankami)
+function swapMap(m,a,b){const av=m.has(a)?m.get(a):undefined,bv=m.has(b)?m.get(b):undefined;
+  if(bv!==undefined)m.set(a,bv);else m.delete(a); if(av!==undefined)m.set(b,av);else m.delete(b);}
+function movePad(srcNo,dstNo){
+  if(srcNo===dstNo)return;
+  const sv=layout.has(srcNo)?layout.get(srcNo):undefined, dv=layout.has(dstNo)?layout.get(dstNo):undefined;
+  if(dv!==undefined)layout.set(srcNo,dv);else layout.delete(srcNo);
+  if(sv!==undefined)layout.set(dstNo,sv);else layout.delete(dstNo);
+  swapMap(chokeOverrides,srcNo,dstNo); swapMap(volumeOverrides,srcNo,dstNo);
+  layoutSeeded=true; selectedPad=dstNo; bank=Math.floor((dstNo-1)/16);
+  buildPreview();
+}
+document.addEventListener('dragend',()=>{dragSrc=null;});
 
 function setMode(m){
   mode=m;
@@ -839,7 +897,8 @@ function setMode(m){
   $('optCompact').style.display=rev?'flex':'none';
   $('optFirstNote').style.display=rev?'none':'flex';
   progFile=null; $('progFiles').innerHTML=''; clearLog();
-  chokeOverrides.clear(); selectedPad=null; bank=0; preview=null; renderPreview();
+  chokeOverrides.clear(); volumeOverrides.clear(); layout=new Map(); layoutSeeded=false;
+  selectedPad=null; bank=0; preview=null; renderPreview();
 }
 
 const PROG_EXT=()=>mode==='rev'?'.adg':'.xpm';
@@ -880,11 +939,11 @@ async function run(){
   try{
     const bytes=new Uint8Array(await progFile.arrayBuffer());
     const name=baseNoExt(progFile.name);
-    const opts={programName:name, chokeOverride:chokeOverrides};
+    const opts={programName:name, chokeOverride:chokeOverrides, volumeOverride:volumeOverrides};
     let res;
-    if(mode==='rev'){ opts.compact=$('compact').checked; res=await M.convertReverse(bytes,sampleMap,opts);
+    if(mode==='rev'){ opts.compact=$('compact').checked; if(layoutSeeded)opts.mapping=layout; res=await M.convertReverse(bytes,sampleMap,opts);
       logLine('Pady: '+res.placed+(res.isTool?'  (kit z forward-toola → 1:1)':''),'ok'); }
-    else { opts.firstNote=$('firstNote').value.trim()===''?null:parseInt($('firstNote').value,10); res=await M.convertForward(bytes,sampleMap,opts);
+    else { opts.firstNote=$('firstNote').value.trim()===''?null:parseInt($('firstNote').value,10); if(layoutSeeded)opts.padMapOverride=layout; res=await M.convertForward(bytes,sampleMap,opts);
       logLine('Pady: '+res.placed+'  | pierwsza nuta MIDI '+res.firstNote,'ok');
       if(res.truncated)logLine('Uwaga: '+res.truncated+' padów poza MIDI 0-127 — pominięte.','err'); }
     if(chokeOverrides.size) logLine(chokeOverrides.size+' padów z ręcznie ustawionym choke.','acc');
