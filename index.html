@@ -57,6 +57,8 @@
   .pad.has:active{transform:scale(.97)}
   .pad.playing{box-shadow:0 0 0 2px var(--acc) inset;border-color:var(--acc)}
   .pad .pn{color:var(--dim);font-size:10px;display:flex;justify-content:space-between;align-items:center}
+  .pad .key{color:var(--acc2);font-weight:700;font-size:9px;border:1px solid var(--line);
+            border-radius:4px;padding:0 3px;margin-left:1px}
   .pad .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
   .pad .sn{font-weight:600;font-size:12px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .pad .meta{color:var(--dim);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -112,7 +114,7 @@
 
   <div class="card" id="previewCard" style="display:none">
     <h3>Podgląd — co wpada na pady <span id="pvMeta"></span></h3>
-    <p class="hint">Klik na pad = odsłuch (z chopem, głośnością i choke). Kolorowa kropka = mute/choke group.</p>
+    <p class="hint">Klik na pad = odsłuch (z chopem, głośnością i choke). Klawisze <b>1234 / qwer / asdf / zxcv</b> grają pady aktualnego banku. Kolorowa kropka = mute/choke group.</p>
     <div class="banks" id="pvBanks"></div>
     <div class="padgrid" id="previewGrid"></div>
   </div>
@@ -151,8 +153,12 @@ function $(id){return document.getElementById(id)}
 
 // ---- podgląd + audio ----
 let preview=null, bank=0, audioCtx=null;
-const bufCache=new Map(), chokeNodes={};
+const bufCache=new Map(), chokeNodes={}, padCells=new Map();
 const MPC_LAYOUT=[[13,14,15,16],[9,10,11,12],[5,6,7,8],[1,2,3,4]];
+// klawiatura MPC: 1234 / qwer / asdf / zxcv -> pady w banku
+const KEYMAP={'1':13,'2':14,'3':15,'4':16,'q':9,'w':10,'e':11,'r':12,
+              'a':5,'s':6,'d':7,'f':8,'z':1,'x':2,'c':3,'v':4};
+const PAD2KEY={}; for(const k in KEYMAP) PAD2KEY[KEYMAP[k]]=k.toUpperCase();
 const MG_COLORS=[null,'#ff6b6b','#7986cb','#66bb6a','#ffa726','#26c6da','#ec407a','#9ccc65','#ab47bc','#ffee58','#42a5f5','#ff7043','#5c6bc0','#90a4ae','#d4e157','#ba68c8','#26a69a'];
 
 async function getBuffer(p){
@@ -203,23 +209,26 @@ function renderPreview(){
     bk.appendChild(el);
   }
   // siatka
-  const grid=$('previewGrid'); grid.innerHTML='';
+  const grid=$('previewGrid'); grid.innerHTML=''; padCells.clear();
   for(const row of MPC_LAYOUT) for(const pin of row){
     const padNo=bank*16+pin;
+    const key=PAD2KEY[pin]||'';
     const p=preview.pads.get(padNo);
     const cell=document.createElement('div');
+    const head=(dot)=>`<div class="pn"><span>pad ${padNo} <b class="key">${key}</b></span>${dot}</div>`;
     if(!p){ cell.className='pad empty';
-      cell.innerHTML=`<div class="pn"><span>pad ${padNo}</span></div><div class="meta">—</div>`; }
+      cell.innerHTML=head('')+`<div class="meta">—</div>`; }
     else if(p.missing){ cell.className='pad miss';
-      cell.innerHTML=`<div class="pn"><span>pad ${padNo}</span></div><div class="sn">${p.sampleName}</div><div class="meta">brak WAV</div>`; }
+      cell.innerHTML=head('')+`<div class="sn">${p.sampleName}</div><div class="meta">brak WAV</div>`; }
     else {
       cell.className='pad has';
       const dot=p.choke?`<span class="dot" style="background:${MG_COLORS[p.choke]||'#888'}"></span>`:'';
       const trim=(p.sampleStart>0||(p.frames&&p.sampleEnd<p.frames))?' ✂':'';
-      cell.innerHTML=`<div class="pn"><span>pad ${padNo}</span>${dot}</div>`+
+      cell.innerHTML=head(dot)+
         `<div class="sn">${p.sampleName}</div>`+
         `<div class="meta">${noteName(p.srcNote)} (${p.srcNote})${p.choke?' • MG'+p.choke:''}${trim}</div>`;
       cell.onclick=()=>playPad(p, cell);
+      padCells.set(padNo, cell);
     }
     grid.appendChild(cell);
   }
@@ -360,6 +369,21 @@ async function run(){
 
 $('compact').addEventListener('change', schedulePreview);
 $('firstNote').addEventListener('input', schedulePreview);
+
+// klawiatura MPC-style (gra pady aktualnego banku)
+document.addEventListener('keydown', e=>{
+  if(e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+  const t=e.target;
+  if(t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
+  if(!preview) return;
+  const pin=KEYMAP[e.key.toLowerCase()];
+  if(!pin) return;
+  e.preventDefault();
+  const padNo=bank*16+pin;
+  const p=preview.pads.get(padNo);
+  if(p && !p.missing) playPad(p, padCells.get(padNo));
+});
+
 setMode('rev');
 </script>
 </body>
