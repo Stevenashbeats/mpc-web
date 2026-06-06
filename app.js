@@ -20,6 +20,9 @@
     const i = b.lastIndexOf(".");
     return i > 0 ? b.slice(0, i) : b;
   }
+  function chokeOf(override, padNo, base) {
+    return (override && override.has(padNo)) ? override.get(padNo) : base;
+  }
 
   // głośność Simplera (dB) -> głośność instrumentu MPC: dB = 40*log10(v)+6
   function dbToMpcVolume(db) {
@@ -301,7 +304,7 @@
       if (trimmed) { sliceStart = start; sliceEnd = Math.max(start, end - 1); sStart = start; sEnd = end; }
       else { sliceStart = 0; sliceEnd = Math.max(0, frames - 1); sStart = 0; sEnd = 0; }
       assignments.set(padNo, {
-        sampleName: baseNoExt(src.name), muteGroup: pad.choke,
+        sampleName: baseNoExt(src.name), muteGroup: chokeOf(opts.chokeOverride, padNo, pad.choke),
         volume: dbToMpcVolume(pad.volumeDb), pan: Math.min(Math.max(0.5 + pad.pan * 0.5, 0), 1),
         sampleStart: sStart, sampleEnd: sEnd, sliceStart, sliceEnd, xfade: -1,
       });
@@ -415,7 +418,9 @@
     if (!padPaths.size) throw new Error("Żaden sampel nie został dopasowany. Dodaj pliki WAV.");
     const maxInst = Math.max(...padPaths.keys());
     const fn = (opts.firstNote != null) ? opts.firstNote : autoFirstNote(maxInst);
-    const { xml: adgXml, truncated } = buildAdgXml(padPaths, parsed.muteMap, fn);
+    const effMute = new Map(parsed.muteMap);
+    if (opts.chokeOverride) for (const [pn, mg] of opts.chokeOverride) effMute.set(pn, mg);
+    const { xml: adgXml, truncated } = buildAdgXml(padPaths, effMute, fn);
     const adgGz = await gzip(new TextEncoder().encode(adgXml));
     const name = parsed.programName;
     const zipFiles = [{ name: name + "/" + name + ".adg", data: adgGz }];
@@ -458,9 +463,10 @@
     for (const [padNo, idx] of mapping) {
       const pad = parsed.pads[idx]; if (!pad) continue;
       const src = resolveSample(pad, sampleFiles);
+      const choke = chokeOf(opts.chokeOverride, padNo, pad.choke);
       if (!src) {
         missing.push(pad.relPath || pad.sampleName);
-        pads.set(padNo, { sampleName: pad.sampleName || "?", srcNote: pad.midi, choke: pad.choke, missing: true });
+        pads.set(padNo, { sampleName: pad.sampleName || "?", srcNote: pad.midi, choke, missing: true });
         continue;
       }
       const info = wavInfo(_bufOf(src.bytes));
@@ -469,7 +475,7 @@
       if (info.frames && end > info.frames) end = info.frames;
       pads.set(padNo, {
         sampleName: baseNoExt(src.name), fileName: src.name, bytes: src.bytes,
-        srcNote: pad.midi, choke: pad.choke, volumeDb: pad.volumeDb,
+        srcNote: pad.midi, choke, volumeDb: pad.volumeDb,
         volume: dbToMpcVolume(pad.volumeDb), pan: pad.pan,
         sampleStart: start, sampleEnd: end, sampleRate: info.sampleRate, frames: info.frames,
       });
@@ -485,7 +491,7 @@
     const fn = (opts.firstNote != null) ? opts.firstNote : autoFirstNote(maxInst);
     const pads = new Map(); const missing = [];
     for (const [instNum, sampleName] of parsed.padMap) {
-      const choke = parsed.muteMap.get(instNum) || 0;
+      const choke = chokeOf(opts.chokeOverride, instNum, parsed.muteMap.get(instNum) || 0);
       const src = sampleFiles.get(sampleName.toLowerCase()) || sampleFiles.get(baseNoExt(sampleName).toLowerCase());
       const note = fn + instNum - 1;
       if (!src) { missing.push(sampleName); pads.set(instNum, { sampleName, srcNote: note, choke, missing: true }); continue; }
